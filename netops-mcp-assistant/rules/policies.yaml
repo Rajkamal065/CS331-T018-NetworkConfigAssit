@@ -1,0 +1,34 @@
+version: "1.0"
+security_policy:
+  protected_interfaces:
+    - "eth0"
+    - "lo"
+  protected_ports:
+    - 22
+    - 53
+    - 5000
+  allowed_ports:
+    - 80
+    - 443
+    - 8080
+    - 9090
+    - 5201
+  allowed_actions:
+    - "ACCEPT"
+    - "DROP"
+    - "REJECT"
+  forbidden_commands:
+    - "FLUSH_ALL"
+    - "iptables -F"
+    - "tc qdisc del dev eth0 root"
+bandwidth_policy:
+  min_bandwidth_mbps: 1
+  max_bandwidth_mbps: 100
+  default_latency_ms: 20
+  allowed_qdisc:
+    - "tbf"
+    - "htb"
+verification:
+  ping_count: 4
+  max_allowed_loss_percent: 0.0
+  iperf_duration_seconds: 5

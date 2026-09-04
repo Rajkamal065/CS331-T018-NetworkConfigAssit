@@ -1,0 +1,8 @@
+fastmcp
+pydantic
+pyyaml
+pytest
+fastapi
+uvicorn[standard]
+python-multipart
+anthropic

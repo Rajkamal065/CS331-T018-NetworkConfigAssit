@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  mcp-server:
+    build: .
+    container_name: netops_mcp_server
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./rules:/app/rules
+    command: ["python", "server.py"]
+    restart: unless-stopped
+
+  netops-ui:
+    build: .
+    container_name: netops_ui
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./rules:/app/rules
+      - ./static:/app/static
+    command: ["python", "ui_server.py"]
+    restart: unless-stopped
+    depends_on:
+      - mcp-server
