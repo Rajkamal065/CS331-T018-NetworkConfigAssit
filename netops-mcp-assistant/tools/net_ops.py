@@ -33,7 +33,6 @@ class NetworkOps:
 
     @classmethod
     def apply_tc_bandwidth_limit(cls, interface: str, rate_mbps: int, latency_ms: int = 20) -> dict:
-        cls.run_cmd(f"tc qdisc del dev {interface} root")
         burst_kbytes = max(15, int(rate_mbps * 1.5))
         cmd = (f"tc qdisc add dev {interface} root tbf "
                f"rate {rate_mbps}mbit burst {burst_kbytes}k latency {latency_ms}ms")

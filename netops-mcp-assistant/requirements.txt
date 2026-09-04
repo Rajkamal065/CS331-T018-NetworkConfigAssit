@@ -1,8 +1,6 @@
 fastmcp
+mcp
 pydantic
 pyyaml
 pytest
-fastapi
-uvicorn[standard]
-python-multipart
-anthropic
+rich

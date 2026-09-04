@@ -1,10 +1,9 @@
 # 🛡️ NetOps MCP Assistant
 
-> **Intelligent Network Operations Assistant** — configure firewalls, set bandwidth limits, and run diagnostics through natural language commands powered by FastMCP and a beautiful Copilot-like web interface.
+> **Intelligent Network Operations Assistant** — configure firewalls, set bandwidth limits, and run diagnostics through natural language commands powered by FastMCP, a dedicated stdio MCP Client, and a standalone Desktop GUI.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)](https://python.org)
-[![FastMCP](https://img.shields.io/badge/FastMCP-latest-purple)](https://github.com/jlowin/fastmcp)
-[![FastAPI](https://img.shields.io/badge/FastAPI-latest-green?logo=fastapi)](https://fastapi.tiangolo.com)
+[![FastMCP](https://img.shields.io/badge/FastMCP-4.0+-purple)](https://github.com/jlowin/fastmcp)
 [![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)](https://docker.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
@@ -18,14 +17,10 @@
 - [Project Structure](#-project-structure)
 - [Prerequisites](#-prerequisites)
 - [Setup & Running](#-setup--running)
-  - [Local (venv)](#option-1-local-with-venv-recommended-for-development)
-  - [Docker](#option-2-docker-recommended-for-production)
-- [Web UI](#-web-ui)
 - [MCP Tools Reference](#-mcp-tools-reference)
 - [Example Commands](#-example-commands)
 - [Policy Rules](#-policy-rules)
 - [Test Cases & Validation](#-test-cases--validation)
-- [Troubleshooting](#-troubleshooting)
 
 ---
 
@@ -33,9 +28,9 @@
 
 NetOps MCP Assistant bridges the gap between human intent and network configuration. Instead of remembering complex `iptables` or `tc` commands, you type natural language:
 
-> *"Block port 8080"* → validates policy → runs `iptables -A INPUT -p tcp --dport 8080 -j DROP`
+> *"Block port 8080"* → parses command → calls MCP tool over stdio → server validates policy → runs `iptables -A INPUT -p tcp --dport 8080 -j DROP`
 
-The assistant enforces **security policies** (protected ports, allowed actions, bandwidth limits) before executing any command, and streams each step live in the UI — just like GitHub Copilot's activity panel.
+The assistant enforces **security policies** (protected ports, allowed actions, protected interfaces, bandwidth ranges) inside the authoritative **FastMCP Server** before executing any command.
 
 ---
 
@@ -43,38 +38,34 @@ The assistant enforces **security policies** (protected ports, allowed actions, 
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                   Browser (localhost:8000)                    │
-│  ┌─────────────┐   SSE stream   ┌──────────────────────────┐ │
-│  │  Chat UI    │ ◄──────────── │  Activity Panel (live)   │ │
-│  │ (index.html)│               │  🧠 Parsing...            │ │
-│  │  app.js     │ POST /chat     │  🛡️ Policy check...       │ │
-│  └──────┬──────┘               │  ⚡ Executing cmd...      │ │
-│         │                      │  ✅ Done                  │ │
-└─────────┼────────────────────────────────────────────────────┘
-          │
-          ▼
-┌─────────────────────────────────┐
-│     FastAPI Bridge (ui_server.py│  port 8000
-│  • Rule-based command parser    │
-│  • SSE event streaming          │
-│  • Policy enforcement           │
-└──────────┬──────────────────────┘
-           │  direct function calls
-           ▼
-┌─────────────────────────────────┐
-│     MCP Server (server.py)      │
-│  FastMCP · 4 registered tools   │
-└────────┬──────────┬─────────────┘
-         │          │
-         ▼          ▼
-┌──────────────┐  ┌──────────────────┐
-│ tools/       │  │ tools/           │
-│ net_ops.py   │  │ verifier.py      │
-│ iptables, tc │  │ ping, iperf3     │
-└──────────────┘  └──────────────────┘
-         │
-         ▼
-  Linux Kernel (NET_ADMIN)
+│             Tkinter Desktop GUI (app.py)                     │
+│    or Interactive Terminal Assistant (assistant.py)          │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    MCP Client (mcp_client.py)                │
+│    • Manages ClientSession over stdio transport              │
+│    • Discovers & calls FastMCP server tools                 │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               │  REAL MCP stdio transport
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    FastMCP Server (server.py)                │
+│    • Authoritative Security Boundary                         │
+│    • 4 registered MCP tools                                  │
+│    • Policy enforcement (rules/policies.yaml)               │
+└──────────────┬───────────────────────────────┬───────────────┘
+               │                               │
+               ▼                               ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│ tools/net_ops.py             │  │ tools/verifier.py          │
+│ (iptables, tc execution)     │  │ (ping, iperf3 diagnostic)  │
+└──────────────┬───────────────┘  └────────────────────────────┘
+               │
+               ▼
+      Linux Kernel (NET_ADMIN)
 ```
 
 ---
@@ -83,14 +74,14 @@ The assistant enforces **security policies** (protected ports, allowed actions, 
 
 | Feature | Details |
 |---------|---------|
-| 🔥 **Firewall Management** | Apply ACCEPT/DROP/REJECT rules via iptables |
-| 📡 **Bandwidth Limiting** | Shape traffic with `tc qdisc tbf` |
-| 🌐 **Network Diagnostics** | Run `ping` and `iperf3` tests |
-| 📋 **Rule Listing** | View all active iptables INPUT rules |
-| 🛡️ **Policy Enforcement** | Pre-execution validation against YAML policies |
-| ⚡ **Live Activity Stream** | Server-Sent Events (SSE) for real-time step display |
-| 🎨 **Copilot-like UI** | Dark glassmorphism UI with animated activity panel |
-| 🐳 **Docker Ready** | Full containerized deployment with `NET_ADMIN` capability |
+| 🤖 **Real MCP Transport** | `mcp_client.py` communicates with `server.py` via official MCP `ClientSession` over stdio |
+| 🔥 **Firewall Management** | Apply ACCEPT/DROP/REJECT rules via iptables over MCP |
+| 📡 **Bandwidth Limiting** | Shape traffic with `tc qdisc tbf` while protecting critical interfaces |
+| 🌐 **Network Diagnostics** | Run `ping` and `iperf3` tests with policy-configured parameters |
+| 📋 **Rule Listing** | Query active iptables INPUT rules over MCP |
+| 🛡️ **Authoritative Security** | Server-side policy enforcement against YAML policies |
+| 🎨 **Standalone Desktop GUI** | Tkinter UI with non-blocking MCP execution |
+| 🐳 **Docker Ready** | Containerized FastMCP server with `NET_ADMIN` capability |
 
 ---
 
@@ -99,28 +90,26 @@ The assistant enforces **security policies** (protected ports, allowed actions, 
 ```
 netops-mcp-assistant/
 │
-├── server.py              # MCP server — 4 FastMCP tools registered
-├── ui_server.py           # FastAPI bridge — serves UI + SSE stream
+├── server.py              # FastMCP server — authoritative security boundary & 4 tools
+├── mcp_client.py          # Dedicated MCP client module (stdio transport & ClientSession)
+├── app.py                 # Standalone Tkinter Desktop GUI
+├── assistant.py           # Interactive Terminal CLI assistant & natural language parser
 │
 ├── tools/
 │   ├── __init__.py
-│   ├── net_ops.py         # NetworkOps class — iptables, tc, subprocess
-│   └── verifier.py        # DiagnosticVerifier — ping, iperf3 parsing
+│   ├── net_ops.py         # Low-level NetworkOps class (iptables, tc, subprocess)
+│   └── verifier.py        # Low-level DiagnosticVerifier class (ping, iperf3 parsing)
 │
 ├── rules/
-│   └── policies.yaml      # Security & bandwidth policy definitions
-│
-├── static/                # Web UI assets
-│   ├── index.html         # Copilot-like chat interface
-│   ├── style.css          # Dark glassmorphism design
-│   └── app.js             # SSE handler, markdown renderer, activity panel
+│   └── policies.yaml      # Central security & bandwidth policy definitions
 │
 ├── tests/
-│   └── test_assistant.py  # pytest test suite (7 tests)
+│   ├── test_assistant.py       # Unit tests for policy validation
+│   └── test_mcp_integration.py # Real MCP client/server integration tests
 │
-├── Dockerfile             # Python 3.11-slim + iptables + iproute2 + ping + iperf3
-├── compose.yaml           # Docker Compose (mcp-server + netops-ui)
-└── requirements.txt       # Python dependencies
+├── Dockerfile             # Container setup (Python 3.11-slim + networking tools)
+├── compose.yaml           # Docker Compose configuration for FastMCP server
+└── requirements.txt       # Dependencies (fastmcp, mcp, rich, pyyaml, pytest)
 ```
 
 ---
@@ -128,99 +117,48 @@ netops-mcp-assistant/
 ## 🔧 Prerequisites
 
 ### Local Development
-- **Python 3.11+**  
-- **pip** / **venv**
-- **iptables** — `sudo apt install iptables`  
-- **iproute2 (tc)** — `sudo apt install iproute2`  
-- **iputils-ping** — `sudo apt install iputils-ping`  
-- **iperf3** (optional, for bandwidth tests) — `sudo apt install iperf3`
+- **Python 3.11+**
+- **iptables** — `sudo apt install iptables`
+- **iproute2 (tc)** — `sudo apt install iproute2`
+- **iputils-ping** — `sudo apt install iputils-ping`
+- **iperf3** (optional, for throughput tests) — `sudo apt install iperf3`
 
 ### Docker Deployment
-- **Docker Engine 24+** — `sudo apt install docker.io`
-- **Docker Compose v2** — `sudo apt install docker-compose-v2`
-
-> **Note:** `iptables` and `tc` require `root` (or `CAP_NET_ADMIN`). Docker handles this automatically with `cap_add: NET_ADMIN`. For local runs, prefix with `sudo`.
+- **Docker Engine 24+**
+- **Docker Compose v2**
 
 ---
 
 ## 🚀 Setup & Running
 
-### Option 1: Local Terminal CLI (recommended)
+### 1. Install Dependencies
 
 ```bash
-# 1. Navigate to project
-cd /home/set-iitgn-vm/Desktop/netops-mcp-assistant
-
-# 2. Install all dependencies
 pip install -r requirements.txt
-
-# 3. Run tests (no sudo needed — policy tests only)
-pytest tests/ -v
-
-# 4. Launch the interactive terminal assistant
-#    ⚠️  sudo required for iptables/tc to actually execute
-sudo python3 assistant.py
-
-#    OR without sudo (diagnostics & policy tests still work):
-python3 assistant.py
 ```
 
-### Option 2: Docker (recommended for production)
+### 2. Run Tests
 
 ```bash
-# Build and start
-sudo docker compose up --build
-
-# View logs
-sudo docker compose logs -f netops-ui
-
-# Stop
-sudo docker compose down
+pytest tests/ -v
 ```
 
-### Run Only the MCP Server (stdio mode)
+### 3. Launch Desktop GUI
+
+```bash
+python3 app.py
+```
+
+### 4. Launch Terminal Assistant
+
+```bash
+sudo python3 assistant.py
+```
+
+### 5. Run FastMCP Server Standalone
 
 ```bash
 python3 server.py
-```
-
----
-
-## 🖥️ Terminal Interface
-
-Run `python3 assistant.py` (or `sudo python3 assistant.py` for full iptables/tc access).
-
-### Session Flow
-
-```
-╔══════════════════════════════════════════════════════════╗
-║  🛡️  NetOps MCP Assistant                               ║
-║  Type help for commands · exit to quit                  ║
-╚══════════════════════════════════════════════════════════╝
-
-netops> block port 8080
-────────────────────────────────────────────────────────
-  🧠  Parsing command          → "block port 8080"
-  🔍  Intent identified        → firewall → DROP port 8080/tcp
-  🛡️   Validating policy        → protected ports: 22, 53, 5000
-  ✅  Policy check passed      → port 8080 is not protected
-  ⚡  Executing firewall command
-     $ iptables -A INPUT -p tcp --dport 8080 -j DROP
-  ✅  Rule applied successfully
-╭──────────────── Firewall Rule Applied ────────────────╮
-│  Action      DROP                                     │
-│  Port        8080/tcp                                 │
-│  Source IP   any                                      │
-╰───────────────────────────────────────────────────────╯
-
-netops> block port 22
-────────────────────────────────────────────────────────
-  🧠  Parsing command          → "block port 22"
-  🔍  Intent identified        → firewall → DROP port 22/tcp
-  🛡️   Validating policy        → protected ports: 22, 53, 5000
-  🚫  POLICY REJECTED          → Port 22 is PROTECTED (prevents lockouts)
-
-  ✘  Port 22 is PROTECTED by security policy.
 ```
 
 ---
@@ -237,7 +175,7 @@ Apply an iptables rule to block or allow traffic on a port.
 | `protocol` | str | `tcp` or `udp` | `tcp` |
 | `source_ip` | str | Optional: restrict to source IP | `""` |
 
-**Policy constraints:** Ports 22, 53, 5000 are protected and cannot be changed.
+**Policy constraints:** Ports 22, 53, 5000 are protected and cannot be modified.
 
 ---
 
@@ -249,7 +187,7 @@ Apply traffic shaping on a network interface using `tc`.
 | `interface` | str | Interface name e.g. `eth0`, `ens3` |
 | `rate_mbps` | int | Speed limit in Mbps (must be 1–100) |
 
-**Policy constraints:** Rate must be between `min_bandwidth_mbps` (1) and `max_bandwidth_mbps` (100).
+**Policy constraints:** Rate must be between 1 and 100 Mbps. `eth0` and `lo` are protected interfaces.
 
 ---
 
@@ -266,42 +204,6 @@ Test network reachability or throughput.
 ### 4. `list_firewall_rules`
 Display all currently active iptables INPUT chain rules.
 
-No parameters required.
-
----
-
-## 💬 Example Commands
-
-Type these directly into the UI or use the sidebar chips:
-
-```
-# Firewall rules
-Block port 8080
-Allow port 443
-Drop UDP traffic on port 9090
-Block port 8080 from 192.168.1.100
-Reject TCP port 3306
-
-# Bandwidth limiting
-Limit bandwidth to 10 Mbps on eth0
-Throttle eth0 to 50 mbps
-Set bandwidth cap to 100 Mbps
-
-# Diagnostics
-Ping 127.0.0.1
-Check connectivity to 8.8.8.8
-Run iperf3 test to 192.168.1.10
-
-# List rules
-List firewall rules
-Show all iptables rules
-
-# Policy rejection examples (try these!)
-Block port 22       → POLICY REJECTION: SSH is protected
-Block port 53       → POLICY REJECTION: DNS is protected
-Limit bandwidth to 500 Mbps → POLICY REJECTION: out of range
-```
-
 ---
 
 ## 📜 Policy Rules
@@ -310,132 +212,31 @@ Defined in `rules/policies.yaml`:
 
 ```yaml
 security_policy:
-  protected_ports: [22, 53, 5000]   # SSH, DNS, MCP — cannot be modified
+  protected_interfaces: ["eth0", "lo"]
+  protected_ports: [22, 53, 5000]
+  allowed_ports: [80, 443, 8080, 9090, 5201]
   allowed_actions: [ACCEPT, DROP, REJECT]
-  forbidden_commands:
-    - "FLUSH_ALL"
-    - "iptables -F"
-    - "tc qdisc del dev eth0 root"
 
 bandwidth_policy:
-  min_bandwidth_mbps: 1             # Minimum allowed rate
-  max_bandwidth_mbps: 100           # Maximum allowed rate
+  min_bandwidth_mbps: 1
+  max_bandwidth_mbps: 100
   default_latency_ms: 20
-  allowed_qdisc: [tbf, htb]        # Allowed queuing disciplines
-
-verification:
-  ping_count: 4
-  max_allowed_loss_percent: 0.0
-  iperf_duration_seconds: 5
 ```
-
-To modify policies, edit `rules/policies.yaml` and restart the server.
 
 ---
 
 ## 🧪 Test Cases & Validation
 
-### Running Tests
+Run the full unit and real MCP integration test suite:
 
 ```bash
-source venv/bin/activate
-pytest tests/test_assistant.py -v
+pytest tests/ -v
 ```
 
-### Test Coverage
-
-| Test | Description | Expected |
-|------|-------------|----------|
-| `test_protected_port_ssh` | Try to DROP port 22 | `POLICY REJECTION` |
-| `test_protected_port_dns` | Try to DROP port 53 | `POLICY REJECTION` |
-| `test_invalid_action` | Use unknown action `DESTROY` | `POLICY REJECTION` |
-| `test_bandwidth_too_high` | Set 500 Mbps | `POLICY REJECTION` |
-| `test_bandwidth_too_low` | Set 0 Mbps | `POLICY REJECTION` |
-| `test_invalid_diagnostic_mode` | Use `traceroute` mode | `Invalid mode` |
-| `test_ping_localhost` | Ping 127.0.0.1 | `PASS` |
-
-### Expected Output
-
-```
-tests/test_assistant.py::test_protected_port_ssh       PASSED
-tests/test_assistant.py::test_protected_port_dns       PASSED
-tests/test_assistant.py::test_invalid_action           PASSED
-tests/test_assistant.py::test_bandwidth_too_high       PASSED
-tests/test_assistant.py::test_bandwidth_too_low        PASSED
-tests/test_assistant.py::test_invalid_diagnostic_mode  PASSED
-tests/test_assistant.py::test_ping_localhost           PASSED
-
-7 passed in X.Xs
-```
-
-### Validation Results
-
-All policy tests pass without `sudo` — they never reach `iptables`. The `ping` test requires network access to localhost (always available). `iperf3` tests require a running iperf3 server.
-
----
-
-## 🔴 Troubleshooting
-
-### `Permission denied` on iptables/tc
-```bash
-# Run with sudo
-sudo python ui_server.py
-# OR use Docker (handles permissions automatically)
-sudo docker compose up --build
-```
-
-### `ModuleNotFoundError: fastmcp`
-```bash
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### `Address already in use` on port 8000
-```bash
-# Find and kill the process
-lsof -ti:8000 | xargs kill -9
-# OR use a different port
-uvicorn ui_server:app --port 8001
-```
-
-### `iperf3: error - unable to connect`
-iperf3 mode requires a running iperf3 server on the target:
-```bash
-# On the target machine:
-iperf3 -s
-# Then test from the UI
-```
-
-### Docker: `Cannot connect to the Docker daemon`
-```bash
-sudo systemctl start docker
-# Add yourself to docker group (requires logout):
-sudo usermod -aG docker $USER
-```
-
----
-
-## 📊 Technology Stack
-
-| Component | Technology |
-|-----------|-----------|
-| MCP Server | [FastMCP](https://github.com/jlowin/fastmcp) |
-| UI Backend | [FastAPI](https://fastapi.tiangolo.com) + [Uvicorn](https://uvicorn.org) |
-| Streaming | Server-Sent Events (SSE) |
-| Frontend | Vanilla HTML/CSS/JS (no framework) |
-| Firewall | `iptables` (Linux netfilter) |
-| Bandwidth | `tc` (Linux traffic control) |
-| Diagnostics | `ping`, `iperf3` |
-| Config | YAML (`pyyaml`) |
-| Testing | `pytest` |
-| Deployment | Docker + Docker Compose |
+Tests verify tool discovery over stdio transport, protected port rejections, protected interface rejections, and diagnostic operations.
 
 ---
 
 ## 📝 License
 
 MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-*Built for the NetOps MCP Assistant project — demonstrating intelligent, policy-enforced network automation with a modern Copilot-style interface.*

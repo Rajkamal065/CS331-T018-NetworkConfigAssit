@@ -27,6 +27,12 @@ def test_bandwidth_too_low():
     result = set_bandwidth_limit(interface="eth0", rate_mbps=0)
     assert "POLICY REJECTION" in result
 
+def test_protected_interface_eth0():
+    """eth0 interface must never be modified by bandwidth limits."""
+    result = set_bandwidth_limit(interface="eth0", rate_mbps=10)
+    assert "POLICY REJECTION" in result
+    assert "PROTECTED" in result
+
 def test_invalid_diagnostic_mode():
     """Invalid diagnostic mode must return error."""
     result = run_diagnostics(target_ip="127.0.0.1", mode="traceroute")
