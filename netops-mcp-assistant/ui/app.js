@@ -84,9 +84,9 @@ function updateStatusUI(status) {
       llmBadge.textContent = "Online";
       llmBadge.className = "badge badge-success";
     } else {
-      llmDesc.textContent = "Pattern Parser Active";
-      llmBadge.textContent = "Pattern Engine";
-      llmBadge.className = "badge badge-warning";
+      llmDesc.textContent = status.llm.provider || "Offline Rule Engine";
+      llmBadge.textContent = "Active";
+      llmBadge.className = "badge badge-success";
     }
   }
 
@@ -279,6 +279,27 @@ function renderAssistantResponse(res) {
           <span class="badge ${isVerified ? 'badge-success' : 'badge-warning'}">${escapeHtml(v.status || 'CHECKED')}</span>
         </div>
         <div class="verif-summary">${escapeHtml(v.summary || JSON.stringify(v))}</div>
+      </div>
+    `;
+  }
+
+  // Diagnostic metrics card (ping / iperf)
+  if (res.result && (res.result.packet_loss_percent !== undefined || res.result.throughput_mbps !== undefined)) {
+    const r = res.result;
+    const isPass = r.status === "PASS";
+    const statusClass = isPass ? "badge-success" : (r.status === "DEGRADED" ? "badge-warning" : "badge-danger");
+    bodyHtml += `
+      <div class="verification-box ${isPass ? 'verified' : 'warning'}" style="margin-top: 10px;">
+        <div class="verif-header">
+          <span class="verif-status">⚡ Diagnostic Reachability Metrics</span>
+          <span class="badge ${statusClass}">${escapeHtml(r.status || 'DONE')}</span>
+        </div>
+        <div class="verif-summary">
+          <strong>Target:</strong> ${escapeHtml(r.target || '127.0.0.1')} &nbsp;|&nbsp;
+          <strong>Packet Loss:</strong> ${r.packet_loss_percent !== undefined ? r.packet_loss_percent + '%' : 'N/A'} &nbsp;|&nbsp;
+          <strong>Avg Latency (RTT):</strong> ${r.avg_rtt_ms !== undefined ? r.avg_rtt_ms + ' ms' : 'N/A'}
+          ${r.throughput_mbps !== undefined ? `&nbsp;|&nbsp; <strong>Throughput:</strong> ${r.throughput_mbps} Mbps` : ''}
+        </div>
       </div>
     `;
   }

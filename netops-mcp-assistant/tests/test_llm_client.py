@@ -58,3 +58,43 @@ def test_fallback_parser_list_rules():
     res = client._fallback_parse("Show active firewall rules")
     assert res["type"] == "tool_call"
     assert res["tool"] == "list_firewall_rules"
+
+    res2 = client._fallback_parse("give me firewall rules")
+    assert res2["type"] == "tool_call"
+    assert res2["tool"] == "list_firewall_rules"
+
+
+def test_fallback_parser_ip_block_with_greeting():
+    """Verify 'hello block the 8.8.8.8' correctly triggers IP block."""
+    client = LLMClient()
+    res = client._fallback_parse("hello block the 8.8.8.8")
+    assert res["type"] == "tool_call"
+    assert res["tool"] == "configure_firewall"
+    assert res["arguments"]["action"] == "DROP"
+    assert res["arguments"]["source_ip"] == "8.8.8.8"
+
+
+def test_fallback_parser_bare_block():
+    """Verify 'block' alone gives guidance message."""
+    client = LLMClient()
+    res = client._fallback_parse("block")
+    assert res["type"] == "message"
+    assert "specify" in res["message"].lower()
+
+
+def test_fallback_parser_tools_query():
+    """Verify 'give me waht tools you can do' returns tool list."""
+    client = LLMClient()
+    res = client._fallback_parse("give me waht tools you can do")
+    assert res["type"] == "message"
+    assert "configure_firewall" in res["message"]
+    assert "list_firewall_rules" in res["message"]
+
+
+def test_fallback_parser_listening_ports():
+    """Verify 'What ports are currently listening on this machine?' maps to check_listening_ports."""
+    client = LLMClient()
+    res = client._fallback_parse("What ports are currently listening on this machine?")
+    assert res["type"] == "tool_call"
+    assert res["tool"] == "check_listening_ports"
+

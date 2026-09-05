@@ -24,7 +24,7 @@ with open(POLICY_PATH, "r") as f:
 # ─── Policy Validator ───────────────────────────────────────────
 def validate_firewall_policy(
     action: str,
-    port: int,
+    port: int = 0,
     protocol: str = "tcp",
     source_ip: str = ""
 ):
@@ -36,72 +36,79 @@ def validate_firewall_policy(
             f"Allowed: {sec.get('allowed_actions')}"
         )
 
-    if not (1 <= port <= 65535):
-        raise ValueError(
-            f"Invalid port {port}. Port must be between 1 and 65535."
-        )
+    # Validate source IP if present
+    if source_ip:
+        try:
+            ipaddress.IPv4Address(source_ip)
+        except ipaddress.AddressValueError:
+            raise ValueError(f"Invalid source IP address: {source_ip}")
+
+    # Validate port
+    if not source_ip:
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Invalid port {port}. Port must be between 1 and 65535.")
+    else:
+        if port != 0 and not (1 <= port <= 65535):
+            raise ValueError(f"Invalid port {port}. Port must be between 1 and 65535.")
 
     if port in sec.get("protected_ports", [22, 53, 5000]):
         raise ValueError(
             f"Port {port} is PROTECTED by security policy (prevents lockouts)."
         )
 
-    # If arbitrary ports are not allowed, enforce the allowed_ports whitelist
     allow_arbitrary = sec.get("allow_arbitrary_ports", True)
-    if not allow_arbitrary:
+    if not allow_arbitrary and port > 0:
         allowed = sec.get("allowed_ports", [])
         if port not in allowed:
             raise ValueError(
                 f"Port {port} is not in allowed_ports policy list: {allowed}"
             )
 
-    proto_lower = protocol.lower()
-    if proto_lower not in sec.get("allowed_protocols", ["tcp", "udp"]):
+    proto_lower = protocol.lower() if protocol else "tcp"
+    if proto_lower not in sec.get("allowed_protocols", ["tcp", "udp", "all"]):
         raise ValueError(
             f"Protocol '{protocol}' is not permitted. Allowed: {sec.get('allowed_protocols')}"
         )
-
-    if source_ip:
-        try:
-            ipaddress.IPv4Address(source_ip)
-        except ipaddress.AddressValueError:
-            raise ValueError(
-                f"Invalid source IP address: {source_ip}"
-            )
 
     return True
 
 
 # ─── Tool 1: Configure Firewall ─────────────────────────────────
 @mcp.tool()
-def configure_firewall(action: str, port: int, protocol: str = "tcp", source_ip: str = "") -> str:
+def configure_firewall(action: str, port: int = 0, protocol: str = "tcp", source_ip: str = "") -> str:
     """
-    Block or allow traffic on a specific port using iptables.
+    Block or allow traffic on a specific port or source IP using iptables.
     action: ACCEPT, DROP, or REJECT
-    port: port number to apply rule on (1-65535)
+    port: port number (1-65535), or 0 when applying an IP-level rule
     protocol: tcp or udp (default: tcp)
-    source_ip: optional - only apply rule to this source IP
+    source_ip: optional - source IP address (e.g. 8.8.8.8)
     """
     try:
         validate_firewall_policy(action, port, protocol, source_ip)
-        res = NetworkOps.apply_iptables_rule(action, port, protocol.lower(), source_ip if source_ip else None)
+        res = NetworkOps.apply_iptables_rule(action, port, protocol.lower() if protocol else "tcp", source_ip if source_ip else None)
+
+        target_desc = f"port {port}/{protocol.lower()}" if port > 0 else f"source IP {source_ip}"
+        if port > 0 and source_ip:
+            target_desc = f"{source_ip} on port {port}/{protocol.lower()}"
 
         if res.get("duplicate"):
             return json.dumps({
                 "status": "DUPLICATE",
-                "message": f"Firewall rule already active: {action} {protocol.lower()} port {port}",
+                "message": f"Firewall rule already active: {action} {target_desc}",
                 "action": action,
                 "port": port,
-                "protocol": protocol.lower()
+                "protocol": protocol.lower() if protocol else "tcp",
+                "source_ip": source_ip
             })
 
         if res["success"]:
             return json.dumps({
                 "status": "SUCCESS",
-                "message": f"Firewall rule applied successfully: [iptables {action} port {port}/{protocol.lower()}]",
+                "message": f"Firewall rule applied successfully: [iptables {action} {target_desc}]",
                 "action": action,
                 "port": port,
-                "protocol": protocol.lower()
+                "protocol": protocol.lower() if protocol else "tcp",
+                "source_ip": source_ip
             })
         return json.dumps({
             "status": "EXECUTION_FAILURE",
@@ -141,6 +148,10 @@ def set_bandwidth_limit(interface: str, rate_mbps: int) -> str:
                 f"{rate_mbps} Mbps is outside allowed range [{min_bw} - {max_bw} Mbps]"
             )
 
+        # Step 1: Capture pre-throttle bandwidth state
+        before_status = NetworkOps.get_bandwidth_status(interface)
+
+        # Step 2: Apply tc bandwidth limit
         res = NetworkOps.apply_tc_bandwidth_limit(interface, rate_mbps)
 
         if not res["success"]:
@@ -148,6 +159,9 @@ def set_bandwidth_limit(interface: str, rate_mbps: int) -> str:
                 "status": "EXECUTION_FAILURE",
                 "error": res.get("stderr") or "tc command failed"
             })
+
+        # Step 3: Independent verification of before vs after state
+        audit = DiagnosticVerifier.verify_bandwidth_limit(interface, rate_mbps, before_status)
 
         verification = POLICIES.get("verification", {})
         diag = DiagnosticVerifier.verify_connectivity(
@@ -158,12 +172,44 @@ def set_bandwidth_limit(interface: str, rate_mbps: int) -> str:
 
         return json.dumps({
             "status": "SUCCESS",
-            "message": f"Bandwidth limited to {rate_mbps} Mbps on interface {interface}.",
+            "message": f"Bandwidth limited to {rate_mbps} Mbps on interface {interface} (transitioned from {audit['before_text']}).",
+            "bandwidth_audit": audit,
+            "verification": audit,
             "diagnostic": diag
         })
     except Exception as e:
         return json.dumps({
             "status": "POLICY_REJECTION",
+            "error": str(e)
+        })
+
+
+# ─── Tool 2b: Check Bandwidth Status ────────────────────────────
+@mcp.tool()
+def check_bandwidth(interface: str = "eth1") -> str:
+    """
+    Inspect the current bandwidth limit and active traffic control qdisc on an interface.
+    interface: network interface name e.g. eth1 (default: eth1)
+    """
+    try:
+        sec = POLICIES.get("security_policy", {})
+        if interface in sec.get("protected_interfaces", ["eth0", "lo"]):
+            # Still report status safely without allowing modification
+            pass
+
+        status = NetworkOps.get_bandwidth_status(interface)
+        return json.dumps({
+            "status": "SUCCESS",
+            "interface": interface,
+            "is_limited": status.get("is_limited", False),
+            "current_rate_mbps": status.get("current_rate_mbps", 1000),
+            "baseline_rate_mbps": status.get("baseline_rate_mbps", 1000),
+            "qdisc": status.get("qdisc", "unknown"),
+            "details": status.get("status_text", "")
+        })
+    except Exception as e:
+        return json.dumps({
+            "status": "ERROR",
             "error": str(e)
         })
 
@@ -254,24 +300,25 @@ def check_port_connectivity(port: int, host: str = "127.0.0.1") -> str:
 
 # ─── Tool 7: Verify Firewall Rule ───────────────────────────────
 @mcp.tool()
-def verify_firewall_rule(action: str, port: int, protocol: str = "tcp") -> str:
+def verify_firewall_rule(action: str, port: int = 0, protocol: str = "tcp", source_ip: str = "") -> str:
     """
     Confirm whether an iptables rule actually exists in the kernel table.
     """
-    res = DiagnosticVerifier.verify_firewall_rule(action=action, port=port, protocol=protocol)
+    res = DiagnosticVerifier.verify_firewall_rule(action=action, port=port, protocol=protocol, source_ip=source_ip)
     return json.dumps(res)
 
 
 # ─── Tool 8: Validate Firewall Change ───────────────────────────
 @mcp.tool()
-def validate_firewall_change(action: str, port: int, protocol: str = "tcp") -> str:
+def validate_firewall_change(action: str, port: int = 0, protocol: str = "tcp", source_ip: str = "") -> str:
     """
     Perform independent dual-layer verification of a firewall rule:
     1. Kernel rule presence check
     2. Socket behavioral probe
     """
-    res = DiagnosticVerifier.verify_firewall_change(action=action, port=port, protocol=protocol)
+    res = DiagnosticVerifier.verify_firewall_change(action=action, port=port, protocol=protocol, source_ip=source_ip)
     return json.dumps(res)
+
 
 
 if __name__ == "__main__":

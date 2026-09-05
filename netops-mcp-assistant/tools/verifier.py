@@ -157,16 +157,17 @@ class DiagnosticVerifier:
         }
 
     @classmethod
-    def verify_firewall_rule(cls, action: str, port: int, protocol: str = "tcp") -> Dict[str, Any]:
+    def verify_firewall_rule(cls, action: str, port: int = 0, protocol: str = "tcp", source_ip: str = "") -> Dict[str, Any]:
         """
-        Verify that a specified firewall rule exists in the kernel iptables table.
+        Verify that a specified firewall rule exists in the active iptables / firewall table.
         """
-        rule_exists = NetworkOps.check_rule_exists(action, port, protocol)
+        rule_exists = NetworkOps.check_rule_exists(action, port, protocol, source_ip)
         return {
             "rule_present": rule_exists,
             "action": action,
             "port": port,
             "protocol": protocol,
+            "source_ip": source_ip,
             "status": "VERIFIED" if rule_exists else "NOT_FOUND"
         }
 
@@ -174,8 +175,9 @@ class DiagnosticVerifier:
     def verify_firewall_change(
         cls,
         action: str,
-        port: int,
+        port: int = 0,
         protocol: str = "tcp",
+        source_ip: str = "",
         target_host: str = "127.0.0.1"
     ) -> Dict[str, Any]:
         """
@@ -184,36 +186,78 @@ class DiagnosticVerifier:
         2. Live Behavioral Probe: Does socket behavior reflect the rule?
         """
         # Step 1: Rule existence check
-        rule_check = cls.verify_firewall_rule(action, port, protocol)
+        rule_check = cls.verify_firewall_rule(action, port, protocol, source_ip)
 
-        # Step 2: Live socket probe (for TCP)
+        # Step 2: Live socket probe (for TCP port if port > 0)
         probe = None
-        if protocol.lower() == "tcp":
-            probe = cls.check_port_reachable(host=target_host, port=port, timeout=1.5)
-
-        # Behavioral assessment:
-        # If action is DROP, probe should be BLOCKED (Timeout) or if loopback bypasses, rule_check still confirms.
-        # If action is ACCEPT, probe should be REACHABLE or REFUSED (if no listener), but NOT BLOCKED.
         behavior_consistent = False
-        if probe:
-            if action in ["DROP", "REJECT"] and probe["state"] in ["BLOCKED", "REFUSED"]:
-                behavior_consistent = True
-            elif action == "ACCEPT" and probe["state"] in ["REACHABLE", "REFUSED"]:
-                behavior_consistent = True
+        if port > 0 and protocol.lower() == "tcp":
+            probe = cls.check_port_reachable(host=target_host, port=port, timeout=1.5)
+            if probe:
+                if action in ["DROP", "REJECT"] and probe["state"] in ["BLOCKED", "REFUSED"]:
+                    behavior_consistent = True
+                elif action == "ACCEPT" and probe["state"] in ["REACHABLE", "REFUSED"]:
+                    behavior_consistent = True
 
         overall_status = "VERIFIED" if (rule_check["rule_present"] or behavior_consistent) else "UNVERIFIED"
+
+        target_desc = f"port {port}/{protocol}" if port > 0 else f"source IP {source_ip}"
+        if port > 0 and source_ip:
+            target_desc = f"{source_ip} on port {port}/{protocol}"
+
+        summary_parts = [
+            f"Rule {action} for {target_desc} is {'confirmed active in firewall table' if rule_check['rule_present'] else 'unconfirmed in table'}."
+        ]
+        if probe:
+            summary_parts.append(f"Socket probe returned: {probe['state']}.")
 
         return {
             "status": overall_status,
             "action": action,
             "port": port,
             "protocol": protocol,
+            "source_ip": source_ip,
             "rule_in_kernel": rule_check["rule_present"],
             "socket_state": probe["state"] if probe else "N/A",
-            "probe_details": probe["details"] if probe else "No socket probe for non-tcp",
-            "summary": (
-                f"Rule {action} on port {port}/{protocol} is "
-                f"{'active in kernel' if rule_check['rule_present'] else 'unconfirmed in kernel'}. "
-                f"Socket probe returned: {probe['state'] if probe else 'N/A'}."
-            )
+            "probe_details": probe["details"] if probe else ("No socket probe needed for IP block" if port == 0 else "N/A"),
+            "summary": " ".join(summary_parts)
         }
+
+    @classmethod
+    def verify_bandwidth_limit(
+        cls,
+        interface: str,
+        requested_rate_mbps: int,
+        before_status: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Authoritative verification of bandwidth limit transition:
+        Compares before vs after bandwidth states and verifies active qdisc.
+        """
+        after_status = NetworkOps.get_bandwidth_status(interface)
+        is_verified = (
+            after_status.get("is_limited") is True and
+            after_status.get("current_rate_mbps") == requested_rate_mbps
+        )
+
+        before_rate = before_status.get("current_rate_mbps", 1000) if before_status else 1000
+        before_text = f"{before_rate} Mbps (Unconstrained)" if (before_status and not before_status.get("is_limited")) else f"{before_rate} Mbps"
+
+        summary = (
+            f"Bandwidth on {interface} successfully transitioned from {before_text} "
+            f"to {requested_rate_mbps} Mbps. Active qdisc: {after_status.get('qdisc')}."
+        ) if is_verified else f"Bandwidth limit on {interface} could not be confirmed."
+
+        return {
+            "status": "VERIFIED" if is_verified else "FAIL",
+            "interface": interface,
+            "before_rate_mbps": before_rate,
+            "before_text": before_text,
+            "configured_rate_mbps": requested_rate_mbps,
+            "after_rate_mbps": after_status.get("current_rate_mbps"),
+            "after_text": f"{after_status.get('current_rate_mbps')} Mbps (Throttled)",
+            "qdisc": after_status.get("qdisc"),
+            "summary": summary
+        }
+
+

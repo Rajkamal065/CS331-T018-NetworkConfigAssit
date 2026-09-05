@@ -128,18 +128,20 @@ class NetOpsBridge:
         ai_response = llm_result.get("ai_response") or llm_result.get("message", "")
 
         if intent_type == "message":
-            # Conversational reply only
-            self.conversation_history.append({"role": "assistant", "content": ai_response})
+            reply_text = llm_result.get("message") or ai_response or "Understood."
+            self.conversation_history.append({"role": "assistant", "content": reply_text})
+            provider_label = self.llm.provider.upper() if self.llm.is_configured else "Rule Engine"
             timeline.append({
                 "step": "LLM_INTERPRETATION",
-                "title": f"AI Intent Interpreter ({self.llm.provider or 'Fallback Parser'})",
-                "detail": f"Interpreted as conversational query ({llm_elapsed}ms)",
+                "title": f"Intent Interpreter ({provider_label})",
+                "detail": f"Resolved conversational query ({llm_elapsed}ms)",
                 "status": "COMPLETED",
                 "timestamp": time.time()
             })
             return {
                 "type": "conversation",
-                "content": ai_response,
+                "content": reply_text,
+                "ai_response": reply_text,
                 "timeline": timeline
             }
 
@@ -165,10 +167,11 @@ class NetOpsBridge:
         # Handle tool call intent
         tool_name = llm_result.get("tool")
         tool_args = llm_result.get("arguments", {})
+        provider_name = self.llm.provider.upper() if self.llm.is_configured else "OFFLINE ENGINE"
 
         timeline.append({
             "step": "LLM_INTENT",
-            "title": f"Intent Resolved by {self.llm.provider.upper() if self.llm.provider else 'ENGINE'}",
+            "title": f"Intent Resolved by {provider_name}",
             "detail": f"Tool: {tool_name} | Arguments: {json.dumps(tool_args)} ({llm_elapsed}ms)",
             "status": "COMPLETED",
             "timestamp": time.time()
@@ -257,11 +260,14 @@ class NetOpsBridge:
             action = tool_args.get("action", "DROP")
             port = int(tool_args.get("port", 0))
             proto = tool_args.get("protocol", "tcp")
+            source_ip = tool_args.get("source_ip", "")
+
+            target_label = f"port {port}/{proto}" if port > 0 else f"source IP {source_ip}"
 
             timeline.append({
                 "step": "VERIFICATION_PROBE",
                 "title": "Independent Dual-Layer Verification",
-                "detail": f"Inspecting iptables kernel table and probing TCP socket on port {port}...",
+                "detail": f"Inspecting firewall table and probing state for {target_label}...",
                 "status": "RUNNING",
                 "timestamp": time.time()
             })
@@ -270,7 +276,8 @@ class NetOpsBridge:
                 v_raw = self.mcp.call_tool("validate_firewall_change", {
                     "action": action,
                     "port": port,
-                    "protocol": proto
+                    "protocol": proto,
+                    "source_ip": source_ip
                 })
                 verification_data = json.loads(v_raw)
             except Exception as ve:
@@ -290,6 +297,25 @@ class NetOpsBridge:
         elif tool_name == "set_bandwidth_limit":
             verification_data = mcp_data.get("diagnostic")
 
+        # Synthesize clear conversational response for operation_success
+        final_ai_msg = ai_response
+        if not final_ai_msg or final_ai_msg.startswith("[Pattern"):
+            if tool_name == "configure_firewall":
+                final_ai_msg = mcp_data.get("message") or f"Firewall rule {tool_args.get('action')} applied."
+            elif tool_name == "run_diagnostics":
+                loss = mcp_data.get("packet_loss_percent", 0.0)
+                rtt = mcp_data.get("avg_rtt_ms", 0.0)
+                target = mcp_data.get("target", "")
+                final_ai_msg = f"Diagnostics complete: target {target} reachable with {loss}% packet loss and {rtt}ms avg latency."
+            elif tool_name == "set_bandwidth_limit":
+                final_ai_msg = mcp_data.get("message") or f"Bandwidth limit applied."
+            elif tool_name == "list_firewall_rules":
+                final_ai_msg = "Retrieved active firewall rules table below."
+            elif tool_name == "check_listening_ports":
+                final_ai_msg = "Retrieved active listening sockets and services below."
+            else:
+                final_ai_msg = mcp_data.get("message") or f"Executed tool: {tool_name}"
+
         return {
             "type": "operation_success",
             "tool": tool_name,
@@ -297,7 +323,7 @@ class NetOpsBridge:
             "result": mcp_data,
             "verification": verification_data,
             "timeline": timeline,
-            "ai_response": ai_response
+            "ai_response": final_ai_msg
         }
 
     def get_firewall_rules(self) -> Dict[str, Any]:

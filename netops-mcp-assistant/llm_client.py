@@ -79,6 +79,23 @@ MCP_TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "check_bandwidth",
+            "description": "Inspect the current bandwidth rate limit, line capacity, and active traffic control qdisc on a network interface. Use when the user wants to check, view, verify, or show bandwidth.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "interface": {
+                        "type": "string",
+                        "description": "Network interface name (e.g. eth1, default: eth1)",
+                        "default": "eth1"
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_diagnostics",
             "description": "Run network diagnostics — ping for reachability or iperf3 for throughput testing. Use when the user wants to ping, test connectivity, check reachability, or measure speed.",
             "parameters": {
@@ -254,9 +271,9 @@ class LLMClient:
         if not self._configured:
             return {
                 "connected": False,
-                "provider": None,
-                "model": None,
-                "message": "No LLM configured. Set LLM_PROVIDER and API key in .env file."
+                "provider": "Offline Rule Engine",
+                "model": "Deterministic Regex & Policy Parser",
+                "message": "Offline Rule Engine Active (Deterministic FastMCP Dispatch)."
             }
         return {
             "connected": True,
@@ -290,7 +307,7 @@ class LLMClient:
             logger.error(f"LLM call failed: {e}")
             return {
                 "type": "error",
-                "message": f"LLM error: {str(e)}. Falling back to pattern matching.",
+                "message": f"LLM error: {str(e)}. Falling back to deterministic rule engine.",
                 "fallback": self._fallback_parse(user_message)
             }
 
@@ -343,7 +360,7 @@ class LLMClient:
                 "type": "tool_call",
                 "tool": fn["name"],
                 "arguments": args,
-                "ai_response": msg.get("content", ""),
+                "ai_response": msg.get("content") or f"Executing network tool: {fn['name']}",
             }
 
         # Conversational response
@@ -409,7 +426,7 @@ class LLMClient:
                 "type": "tool_call",
                 "tool": tool_call["name"],
                 "arguments": tool_call["arguments"],
-                "ai_response": text_content,
+                "ai_response": text_content or f"Executing network tool: {tool_call['name']}",
             }
 
         return {
@@ -420,91 +437,167 @@ class LLMClient:
 
     def _fallback_parse(self, message: str) -> dict:
         """
-        Regex-based fallback parser when no LLM is available.
-        Clearly labeled as pattern matching, not AI.
+        Deterministic intent parser for local network operations.
+        Provides robust natural language interpretation, typo resilience, and conversational flexibility.
         """
         msg = message.lower().strip()
 
-        # List rules
-        if re.search(r'\b(list|show|display|get)\b.*\b(rule|firewall|iptables)\b', msg) or \
-           re.search(r'\b(firewall|iptables)\b.*\b(list|show|rules?)\b', msg) or \
-           msg in ("list rules", "show rules", "firewall rules", "rules"):
+        # 1. Query available tools / capabilities / help
+        if re.search(r'\b(what|waht|which|list|show|give|tell)\b.*\b(tools?|capabilities|functions|features|commands|help)\b', msg) or \
+           msg in ("tools", "list tools", "show tools", "help", "what can you do", "commands", "?"):
+            tool_guide = (
+                "Here are the network operations tools available in NetOps MCP:\n\n"
+                "1. configure_firewall — Block, allow, or reject traffic on a port or IP (e.g. 'block port 8080', 'block 8.8.8.8')\n"
+                "2. list_firewall_rules — Display all currently active firewall rules\n"
+                "3. check_listening_ports — View open listening sockets and services on this machine\n"
+                "4. set_bandwidth_limit — Throttle interface speed using traffic control (e.g. 'limit eth1 to 20 Mbps')\n"
+                "5. run_diagnostics — Test reachability and measure latency via ICMP ping (e.g. 'ping 8.8.8.8')\n"
+                "6. check_port_connectivity — Actively probe TCP reachability on a specific port\n"
+                "7. validate_firewall_change — Independent dual-layer verification of network rules\n\n"
+                "Note: Critical infrastructure ports 22 (SSH), 53 (DNS), and 5000 are authoritatively protected."
+            )
+            return {
+                "type": "message",
+                "message": tool_guide,
+                "ai_response": tool_guide,
+                "is_fallback": True
+            }
+
+        # 2. Bare action keywords without parameters
+        if msg in ("block", "drop", "reject", "deny"):
+            guide = (
+                "Please specify what you would like to block:\n"
+                "- A port number: e.g. 'block port 8080' or 'block 9999'\n"
+                "- An IP address: e.g. 'block 8.8.8.8'\n"
+                "- Test lockout security: 'block port 22'"
+            )
+            return {
+                "type": "message",
+                "message": guide,
+                "ai_response": guide,
+                "is_fallback": True
+            }
+
+        if msg in ("allow", "accept", "permit", "open"):
+            guide = (
+                "Please specify what you would like to allow:\n"
+                "- A port number: e.g. 'allow port 8080' or 'allow 9999'\n"
+                "- A port from an IP: e.g. 'allow port 80 from 192.168.1.50'"
+            )
+            return {
+                "type": "message",
+                "message": guide,
+                "ai_response": guide,
+                "is_fallback": True
+            }
+
+        # 3. View / List firewall rules queries
+        # Matches: "firewall rules", "fire wall rules", "what are the active current rules", "return firewall rules", "current rules", "show rules", etc.
+        if re.search(r'\b(fire\s*wall|iptables)\b', msg) or \
+           re.search(r'\b(active|current|all|list|show|display|get|view|return|what|fetch|check)\b.*\brules?\b', msg) or \
+           re.search(r'\brules?\b.*\b(active|current|table|fire\s*wall)\b', msg) or \
+           msg in ("rules", "rule", "current rules", "active rules"):
             return {
                 "type": "tool_call",
                 "tool": "list_firewall_rules",
                 "arguments": {},
-                "ai_response": "[Pattern matching — no LLM configured]",
+                "ai_response": "Retrieving active firewall configuration table.",
                 "is_fallback": True
             }
 
-        # Firewall configuration (block/allow/open specific port)
-        fw = re.search(
-            r'\b(block|drop|reject|deny|allow|accept|permit|open)\b'
-            r'.*?\bport\s+(\d{1,5})\b', msg
-        )
-        if fw:
-            action_word = fw.group(1)
-            port = int(fw.group(2))
-            block_words = {"block", "drop", "reject", "deny"}
-            action = "DROP" if action_word in block_words else "ACCEPT"
-
-            proto_match = re.search(r'\b(tcp|udp)\b', msg)
-            proto = proto_match.group(1) if proto_match else "tcp"
-
-            src_match = re.search(r'\bfrom\s+(\d{1,3}(?:\.\d{1,3}){3})\b', msg)
-            src = src_match.group(1) if src_match else ""
-
-            if 1 <= port <= 65535:
-                return {
-                    "type": "tool_call",
-                    "tool": "configure_firewall",
-                    "arguments": {"action": action, "port": port, "protocol": proto, "source_ip": src},
-                    "ai_response": "[Pattern matching — no LLM configured]",
-                    "is_fallback": True
-                }
-
-        # Check listening ports (generic check, without specific port configuration)
-        if re.search(r'\b(listening|open)\s+(ports|sockets)\b', msg) or \
+        # 4. Check listening ports
+        # Matches: "listening ports", "what ports are currently listening on this machine?", "open ports", "ports listening"
+        # Note: "open port 8080" is a firewall rule, NOT check_listening_ports!
+        if re.search(r'\b(listening|open)\s+ports\b', msg) or \
            re.search(r'\blistening\s+port\b', msg) or \
-           re.search(r'(what|which).*port.*listen', msg):
+           re.search(r'\bports?\s+listening\b', msg) or \
+           re.search(r'\b(what|which|show|list|check)\b.*ports?.*listen', msg) or \
+           msg in ("listening ports", "check listening", "open ports", "listening", "sockets"):
             return {
                 "type": "tool_call",
                 "tool": "check_listening_ports",
                 "arguments": {},
-                "ai_response": "[Pattern matching — no LLM configured]",
+                "ai_response": "Querying active listening network ports on the system.",
                 "is_fallback": True
             }
 
-        # Port connectivity check
-        conn_match = re.search(r'\b(check|test|connect)\b.*?(\d{1,3}(?:\.\d{1,3}){3})?[:\s]+(\d{1,5})\b', msg)
-        if conn_match:
-            host = conn_match.group(2) or "127.0.0.1"
-            port = int(conn_match.group(3))
-            return {
-                "type": "tool_call",
-                "tool": "check_port_connectivity",
-                "arguments": {"host": host, "port": port},
-                "ai_response": "[Pattern matching — no LLM configured]",
-                "is_fallback": True
-            }
+        # 5. Firewall configuration (Block / Allow / Drop / Reject / Open / Close)
+        # Robust handling for:
+        #   - "block port 9999", "allow port 9999", "open port 8080"
+        #   - "heyy i want you to block mea a port thats 9999"
+        #   - "block 9999", "allow 9999"
+        #   - "allow pprt 9999" (typo handling)
+        #   - "hello block the 8.8.8.8", "block 8.8.8.8"
+        action_match = re.search(r'\b(block|drop|reject|deny|allow|accept|permit|open|close|unblock)\b', msg)
+        if action_match:
+            action_verb = action_match.group(1)
+            action = "DROP" if action_verb in ("block", "drop", "reject", "deny", "close") else "ACCEPT"
 
-        # Bandwidth limit
-        bw_rate_match = re.search(r'(\d+)\s*(?:mbps|mbit|mb)\b', msg) or re.search(r'\bto\s+(\d+)\b', msg)
-        if (re.search(r'\b(limit|throttle|cap|restrict|bandwidth)\b', msg)) and bw_rate_match:
-            rate = int(bw_rate_match.group(1))
-            iface_match = re.search(r'\b(eth\d+|ens\d+|eno\d+|enp\d+s\d+|wlan\d+)\b', msg)
-            iface = iface_match.group(1) if iface_match else "eth1"
+            # Check for IP address
+            ip_match = re.search(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b', msg)
+            target_ip = ip_match.group(1) if ip_match else ""
+
+            # Check for port number:
+            # First check for explicit or typo port word: "port", "pprt", "prt", "port thats", "port is"
+            port_match = re.search(r'\b(?:port|pprt|prt)?\s*(?:is|thats|that\'s|number)?\s*(\d{1,5})\b', msg)
+            
+            # Find candidate port number
+            candidate_port = None
+            if port_match and not target_ip:
+                # Any standalone number 1-65535 is treated as a port
+                candidate_port = int(port_match.group(1))
+            elif target_ip:
+                # If an IP was found, look for another number that isn't part of the IP
+                ip_clean = target_ip.replace(".", r"\.")
+                without_ip = re.sub(ip_clean, "", msg)
+                num_match = re.search(r'\b(\d{1,5})\b', without_ip)
+                if num_match:
+                    candidate_port = int(num_match.group(1))
+
+            proto = "udp" if re.search(r'\budp\b', msg) else "tcp"
+
+            if candidate_port is not None and (1 <= candidate_port <= 65535):
+                return {
+                    "type": "tool_call",
+                    "tool": "configure_firewall",
+                    "arguments": {"action": action, "port": candidate_port, "protocol": proto, "source_ip": target_ip},
+                    "ai_response": f"Applying firewall rule: {action} {proto} port {candidate_port}{f' from {target_ip}' if target_ip else ''}.",
+                    "is_fallback": True
+                }
+            elif target_ip:
+                return {
+                    "type": "tool_call",
+                    "tool": "configure_firewall",
+                    "arguments": {"action": action, "port": 0, "protocol": proto, "source_ip": target_ip},
+                    "ai_response": f"Applying firewall rule to {action} traffic from source IP {target_ip}.",
+                    "is_fallback": True
+                }
+
+        # 6. Bandwidth limit (tc)
+        # Matches: "set bandwidth limit 20 on etho0", "limit bandwidth on eth1 to 20 mbps", "throttle speed to 50", etc.
+        if re.search(r'\b(bandwidth|traffic|throttle|tc|qdisc)\b', msg) or \
+           re.search(r'\b(limit|cap|restrict)\b.*\b(\d+)\b', msg):
+            # Strip interface names before looking for rate digits so digits in 'eth1' are not captured as rate
+            clean_for_rate = re.sub(r'\b(etho?\d+|ens\d+|eno\d+|enp\d+s\d+|wlan\d+|lo)\b', '', msg)
+            rate_match = re.search(r'(\d+)\s*(?:mbps|mbit|mb|m)?\b', clean_for_rate)
+            rate = int(rate_match.group(1)) if rate_match else 20
+            rate = max(1, min(100, rate))
+
+            # Extract and normalize interface name (handles typos like etho0 -> eth0)
+            iface_match = re.search(r'\b(etho?\d+|ens\d+|eno\d+|enp\d+s\d+|wlan\d+|lo)\b', msg)
+            iface = iface_match.group(1).replace("etho", "eth") if iface_match else "eth1"
+
             return {
                 "type": "tool_call",
                 "tool": "set_bandwidth_limit",
                 "arguments": {"interface": iface, "rate_mbps": rate},
-                "ai_response": "[Pattern matching — no LLM configured]",
+                "ai_response": f"Configuring bandwidth limit to {rate} Mbps on interface {iface}.",
                 "is_fallback": True
             }
 
-        # Diagnostics (ping / iperf)
-        diag = re.search(r'\b(ping|test|check|diagnose|diagnostic|iperf)\b', msg)
-        if diag:
+        # 7. Diagnostics (ping / iperf)
+        # Matches: "ping to the address 8.8.8.8", "ping 127.0.0.1 to check latency", "test reachability 8.8.8.8", etc.
+        if re.search(r'\b(ping|latency|rtt|reachability|packet\s*loss|iperf|diagnos)\b', msg):
             ip_match = re.search(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b', msg)
             target = ip_match.group(1) if ip_match else "127.0.0.1"
             mode = "iperf3" if re.search(r'\b(iperf|throughput|speed)\b', msg) else "ping"
@@ -512,14 +605,59 @@ class LLMClient:
                 "type": "tool_call",
                 "tool": "run_diagnostics",
                 "arguments": {"target_ip": target, "mode": mode},
-                "ai_response": "[Pattern matching — no LLM configured]",
+                "ai_response": f"Running network diagnostics ({mode}) for {target}.",
                 "is_fallback": True
             }
 
+        # 8. Port connectivity probe
+        conn_match = re.search(r'\b(check|test|probe)\b.*?\bport\s+(\d{1,5})\b', msg) or \
+                     re.search(r'\b(connect|reach)\b.*?(\d{1,3}(?:\.\d{1,3}){3})?[:\s]+(\d{1,5})\b', msg)
+        if conn_match:
+            port = int(conn_match.group(2) if conn_match.group(2) else conn_match.group(3))
+            host_match = re.search(r'\b(\d{1,3}(?:\.\d{1,3}){3})\b', msg)
+            host = host_match.group(1) if host_match else "127.0.0.1"
+            return {
+                "type": "tool_call",
+                "tool": "check_port_connectivity",
+                "arguments": {"host": host, "port": port},
+                "ai_response": f"Probing TCP socket reachability for {host}:{port}.",
+                "is_fallback": True
+            }
+
+        # 9. Friendly greetings & conversation
+        if re.match(r'^(hi|hello|hey|greetings|hola)\b', msg):
+            welcome = (
+                "Hello! I am your AI Network Operations Assistant. I can help you configure firewall rules, "
+                "limit interface bandwidth, inspect listening sockets, and test reachability via ICMP ping.\n\n"
+                "Try commands like:\n"
+                "- 'block port 8080' or 'block 8.8.8.8'\n"
+                "- 'block port 22' (tests policy lockout protection)\n"
+                "- 'give me firewall rules'\n"
+                "- 'what ports are currently listening on this machine?'\n"
+                "- 'ping 8.8.8.8'\n"
+                "- 'limit eth1 to 20 Mbps'"
+            )
+            return {
+                "type": "message",
+                "message": welcome,
+                "ai_response": welcome,
+                "is_fallback": True
+            }
+
+        default_reply = (
+            f"I received your request: \"{message}\".\n\n"
+            "You can execute network operations by asking:\n"
+            "- 'block port 8080' or 'block 8.8.8.8'\n"
+            "- 'give me firewall rules'\n"
+            "- 'check listening ports'\n"
+            "- 'ping 8.8.8.8'\n"
+            "- 'limit eth1 to 20 Mbps'\n"
+            "- 'what tools can you do' (lists all capabilities)"
+        )
         return {
             "type": "message",
-            "message": "I couldn't understand that command. Try something like 'block port 8080' or 'ping 8.8.8.8'.",
-            "ai_response": "[Pattern matching — no LLM configured]",
+            "message": default_reply,
+            "ai_response": default_reply,
             "is_fallback": True
         }
 
