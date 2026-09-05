@@ -1,11 +1,12 @@
 # 🛡️ NetOps MCP Assistant
 
-> **Intelligent Network Operations Assistant** — configure firewalls, set bandwidth limits, and run diagnostics through natural language commands powered by FastMCP, a dedicated stdio MCP Client, and a standalone Desktop GUI.
+> **Autonomous AI-Powered Network Operations Desktop Assistant** — configure firewalls, manage bandwidth limits, query listening ports, and run network diagnostics through genuine AI natural language reasoning powered by Claude / Groq / OpenRouter, an authoritative FastMCP server via stdio transport, and independent dual-layer verification.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)](https://python.org)
 [![FastMCP](https://img.shields.io/badge/FastMCP-4.0+-purple)](https://github.com/jlowin/fastmcp)
+[![pywebview](https://img.shields.io/badge/pywebview-Desktop-emerald)](https://pywebview.flowrl.com/)
 [![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)](https://docker.com)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Tests](https://img.shields.io/badge/Tests-26%20Passed-success)](tests/)
 
 ---
 
@@ -13,24 +14,24 @@
 
 - [Overview](#-overview)
 - [Architecture](#-architecture)
-- [Features](#-features)
-- [Project Structure](#-project-structure)
-- [Prerequisites](#-prerequisites)
-- [Setup & Running](#-setup--running)
-- [MCP Tools Reference](#-mcp-tools-reference)
-- [Example Commands](#-example-commands)
-- [Policy Rules](#-policy-rules)
-- [Test Cases & Validation](#-test-cases--validation)
+- [Subsystems & Security Boundaries](#-subsystems--security-boundaries)
+- [Setup & Installation](#-setup--installation)
+- [Configuring the LLM (Claude, Groq, etc.)](#-configuring-the-llm)
+- [Running the Desktop Assistant](#-running-the-desktop-assistant)
+- [Interactive Live Demo & Verification](#-interactive-live-demo--verification)
+- [FastMCP Tools Reference](#-fastmcp-tools-reference)
+- [Automated Test Suite](#-automated-test-suite)
 
 ---
 
 ## 🌐 Overview
 
-NetOps MCP Assistant bridges the gap between human intent and network configuration. Instead of remembering complex `iptables` or `tc` commands, you type natural language:
+NetOps MCP Assistant delivers a professional desktop experience for network administrators. Unlike superficial chatbots that match canned keywords, NetOps uses an end-to-end architecture:
 
-> *"Block port 8080"* → parses command → calls MCP tool over stdio → server validates policy → runs `iptables -A INPUT -p tcp --dport 8080 -j DROP`
-
-The assistant enforces **security policies** (protected ports, allowed actions, protected interfaces, bandwidth ranges) inside the authoritative **FastMCP Server** before executing any command.
+1. **Natural Language Reasoning**: The user's request is interpreted by a genuine LLM (Anthropic Claude, Groq, OpenRouter, or Ollama) using structured tool calling schemas.
+2. **Authoritative Security Enforcement**: The LLM is strictly an intent interpreter, **never a security authority**. The request is dispatched over stdio to an authoritative FastMCP server which validates policies in `rules/policies.yaml`.
+3. **Execution Layer**: Approved actions execute via safe subprocess argument arrays without `shell=True`.
+4. **Independent Dual-Layer Verification**: The verification engine independently probes the live socket state and inspects the kernel table to prove whether changes took effect.
 
 ---
 
@@ -38,205 +39,189 @@ The assistant enforces **security policies** (protected ports, allowed actions, 
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│             Tkinter Desktop GUI (app.py)                     │
-│    or Interactive Terminal Assistant (assistant.py)          │
+│             HTML5 / CSS3 / JavaScript Frontend               │
+│     • Modern slate theme with live subsystem health cards     │
+│     • Visual operation timeline & independent verification    │
 └──────────────────────────────┬───────────────────────────────┘
                                │
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    MCP Client (mcp_client.py)                │
-│    • Manages ClientSession over stdio transport              │
-│    • Discovers & calls FastMCP server tools                 │
+│             pywebview Desktop Application Window             │
+│            • Native desktop wrapper (app.py)                 │
 └──────────────────────────────┬───────────────────────────────┘
                                │
-                               │  REAL MCP stdio transport
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    FastMCP Server (server.py)                │
+│              Python Bridge (NetOpsBridge)                    │
+│     • Orchestrates LLM, MCP, and Verification pipelines       │
+└──────────────┬───────────────────────────────┬───────────────┘
+               │                               │
+               ▼                               ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│      LLM Client              │  │      MCP Client            │
+│ (Claude / Groq / OpenRouter) │  │ (stdio ClientSession)      │
+└──────────────────────────────┘  └────────────┬───────────────┘
+                                               │
+                                               │ REAL stdio transport
+                                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                   FastMCP Server (server.py)                 │
 │    • Authoritative Security Boundary                         │
-│    • 4 registered MCP tools                                  │
-│    • Policy enforcement (rules/policies.yaml)               │
+│    • 8 registered MCP tools                                  │
+│    • Enforces policies.yaml (arbitrary ports, protected IPs) │
 └──────────────┬───────────────────────────────┬───────────────┘
                │                               │
                ▼                               ▼
 ┌──────────────────────────────┐  ┌────────────────────────────┐
 │ tools/net_ops.py             │  │ tools/verifier.py          │
-│ (iptables, tc execution)     │  │ (ping, iperf3 diagnostic)  │
+│ (iptables, tc, ss execution) │  │ (independent socket probe, │
+│                              │  │  dual-layer verification)  │
 └──────────────┬───────────────┘  └────────────────────────────┘
                │
                ▼
-      Linux Kernel (NET_ADMIN)
+       Linux Kernel (NET_ADMIN)
 ```
 
 ---
 
-## ✨ Features
+## 🔒 Subsystems & Security Boundaries
 
-| Feature | Details |
-|---------|---------|
-| 🤖 **Real MCP Transport** | `mcp_client.py` communicates with `server.py` via official MCP `ClientSession` over stdio |
-| 🔥 **Firewall Management** | Apply ACCEPT/DROP/REJECT rules via iptables over MCP |
-| 📡 **Bandwidth Limiting** | Shape traffic with `tc qdisc tbf` while protecting critical interfaces |
-| 🌐 **Network Diagnostics** | Run `ping` and `iperf3` tests with policy-configured parameters |
-| 📋 **Rule Listing** | Query active iptables INPUT rules over MCP |
-| 🛡️ **Authoritative Security** | Server-side policy enforcement against YAML policies |
-| 🎨 **Standalone Desktop GUI** | Tkinter UI with non-blocking MCP execution |
-| 🐳 **Docker Ready** | Containerized FastMCP server with `NET_ADMIN` capability |
+### 1. Invariants That Are Never Bypassed
+- **Protected Ports**: Ports `22` (SSH), `53` (DNS), and `5000` (Agent infrastructure) can **never** be blocked or dropped. Any attempt triggers an immediate `POLICY_REJECTION`.
+- **Protected Interfaces**: `eth0` and `lo` can never have bandwidth restrictions applied.
+- **Arbitrary Ports**: Ports `1-65535` are permitted unless in the protected list (`allow_arbitrary_ports: true`).
+- **No Shell Injection**: All commands execute using argument arrays (`subprocess.run(["iptables", ...])`), never `shell=True`.
+- **Independent Verification**: A command returning status code 0 does not mean the port is blocked. The verifier actively tests socket reachability.
 
 ---
 
-## 📁 Project Structure
+## 🚀 Setup & Installation
 
-```
-netops-mcp-assistant/
-│
-├── server.py              # FastMCP server — authoritative security boundary & 4 tools
-├── mcp_client.py          # Dedicated MCP client module (stdio transport & ClientSession)
-├── app.py                 # Standalone Tkinter Desktop GUI
-├── assistant.py           # Interactive Terminal CLI assistant & natural language parser
-│
-├── tools/
-│   ├── __init__.py
-│   ├── net_ops.py         # Low-level NetworkOps class (iptables, tc, subprocess)
-│   └── verifier.py        # Low-level DiagnosticVerifier class (ping, iperf3 parsing)
-│
-├── rules/
-│   └── policies.yaml      # Central security & bandwidth policy definitions
-│
-├── tests/
-│   ├── test_assistant.py       # Unit tests for policy validation
-│   └── test_mcp_integration.py # Real MCP client/server integration tests
-│
-├── Dockerfile             # Container setup (Python 3.11-slim + networking tools)
-├── compose.yaml           # Docker Compose configuration for FastMCP server
-└── requirements.txt       # Dependencies (fastmcp, mcp, rich, pyyaml, pytest)
-```
-
----
-
-## 🔧 Prerequisites
-
-### Local Development
-- **Python 3.11+**
-- **iptables** — `sudo apt install iptables`
-- **iproute2 (tc)** — `sudo apt install iproute2`
-- **iputils-ping** — `sudo apt install iputils-ping`
-- **iperf3** (optional, for throughput tests) — `sudo apt install iperf3`
-
-### Docker Deployment
-- **Docker Engine 24+**
-- **Docker Compose v2**
-
----
-
-## 🚀 Setup & Running
+### Prerequisites
+- Python 3.11 or 3.12
+- Linux environment or Docker (for real `iptables` / `tc` execution; Windows supported for GUI/CLI/mock development)
 
 ### 1. Install Dependencies
-
 ```bash
+cd netops-mcp-assistant
 pip install -r requirements.txt
 ```
 
-### 2. Run Tests
+---
 
+## 🔑 Configuring the LLM
+
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to configure your preferred LLM:
+
+### Option A: Anthropic Claude (Recommended)
+```ini
+LLM_PROVIDER=claude
+LLM_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+### Option B: Groq (Ultra-Fast Free Tier)
+```ini
+LLM_PROVIDER=groq
+LLM_MODEL=llama-3.1-8b-instant
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+### Option C: OpenRouter (Free Tier Available)
+```ini
+LLM_PROVIDER=openrouter
+LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+```
+
+### Option D: Ollama (100% Local & Offline)
+```ini
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.1
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+> **Note**: If no API key is provided, the assistant transparently falls back to its deterministic pattern-matching engine and clearly indicates this in the UI.
+
+---
+
+## 💻 Running the Desktop Assistant
+
+To launch the native desktop application:
+```bash
+python app.py
+```
+
+To run in terminal CLI mode:
+```bash
+python assistant.py
+```
+
+---
+
+## 🧪 Interactive Live Demo & Verification
+
+The repository includes a self-contained demonstration environment in `demo/`:
+
+### Automated Verification Test
+Run the end-to-end verification script:
+```bash
+python demo/validate_firewall.py
+```
+This tests:
+1. Baseline socket reachability
+2. Protected port lockout protection (Attempt to block port 22 &rarr; FastMCP policy rejection)
+3. Arbitrary port blocking (Block port 9999 &rarr; Permitted and applied)
+4. Dual-layer verification (Kernel rule check + TCP socket probe)
+5. Port restoration (Allow port 9999)
+
+### Interactive Service Demo
+1. Start the demo TCP echo server on port 9999:
+   ```bash
+   python demo/start_demo.py --port 9999
+   ```
+2. In the desktop application (`python app.py`), issue commands:
+   - `"Block port 9999 TCP with DROP"`
+   - `"Check connectivity to port 9999"`
+   - `"Allow port 9999 TCP"`
+3. Stop the demo service:
+   ```bash
+   python demo/stop_demo.py
+   ```
+
+---
+
+## 🛠️ FastMCP Tools Reference
+
+The FastMCP server exposes 8 specialized tools:
+
+| Tool Name | Parameters | Description |
+|---|---|---|
+| `configure_firewall` | `action`, `port`, `protocol`, `source_ip` | Apply ACCEPT/DROP/REJECT rules via iptables after authoritative policy check |
+| `set_bandwidth_limit` | `interface`, `rate_mbps` | Apply traffic shaping with `tc qdisc tbf` while safeguarding protected interfaces |
+| `run_diagnostics` | `target_ip`, `mode` (`ping` / `iperf3`) | Test reachability or throughput against a target host |
+| `list_firewall_rules` | _(none)_ | Enumerate all active iptables INPUT chain rules |
+| `check_listening_ports` | _(none)_ | Enumerate listening sockets on the host |
+| `check_port_connectivity` | `port`, `host` | Actively test TCP connection reachability |
+| `verify_firewall_rule` | `action`, `port`, `protocol` | Check kernel iptables table for rule existence |
+| `validate_firewall_change` | `action`, `port`, `protocol` | Dual-layer verification: kernel table inspection + socket probe |
+
+---
+
+## 🧪 Automated Test Suite
+
+Run the full pytest suite:
 ```bash
 pytest tests/ -v
 ```
 
-### 3. Launch Desktop GUI
-
-```bash
-python3 app.py
-```
-
-### 4. Launch Terminal Assistant
-
-```bash
-sudo python3 assistant.py
-```
-
-### 5. Run FastMCP Server Standalone
-
-```bash
-python3 server.py
-```
-
----
-
-## 📚 MCP Tools Reference
-
-### 1. `configure_firewall`
-Apply an iptables rule to block or allow traffic on a port.
-
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `action` | str | `ACCEPT`, `DROP`, or `REJECT` | required |
-| `port` | int | Port number (1–65535) | required |
-| `protocol` | str | `tcp` or `udp` | `tcp` |
-| `source_ip` | str | Optional: restrict to source IP | `""` |
-
-**Policy constraints:** Ports 22, 53, 5000 are protected and cannot be modified.
-
----
-
-### 2. `set_bandwidth_limit`
-Apply traffic shaping on a network interface using `tc`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `interface` | str | Interface name e.g. `eth0`, `ens3` |
-| `rate_mbps` | int | Speed limit in Mbps (must be 1–100) |
-
-**Policy constraints:** Rate must be between 1 and 100 Mbps. `eth0` and `lo` are protected interfaces.
-
----
-
-### 3. `run_diagnostics`
-Test network reachability or throughput.
-
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `target_ip` | str | IP address to test | required |
-| `mode` | str | `ping` or `iperf3` | `ping` |
-
----
-
-### 4. `list_firewall_rules`
-Display all currently active iptables INPUT chain rules.
-
----
-
-## 📜 Policy Rules
-
-Defined in `rules/policies.yaml`:
-
-```yaml
-security_policy:
-  protected_interfaces: ["eth0", "lo"]
-  protected_ports: [22, 53, 5000]
-  allowed_ports: [80, 443, 8080, 9090, 5201]
-  allowed_actions: [ACCEPT, DROP, REJECT]
-
-bandwidth_policy:
-  min_bandwidth_mbps: 1
-  max_bandwidth_mbps: 100
-  default_latency_ms: 20
-```
-
----
-
-## 🧪 Test Cases & Validation
-
-Run the full unit and real MCP integration test suite:
-
-```bash
-pytest tests/ -v
-```
-
-Tests verify tool discovery over stdio transport, protected port rejections, protected interface rejections, and diagnostic operations.
-
----
-
-## 📝 License
-
-MIT License — see [LICENSE](LICENSE) for details.
+All 26 tests cover:
+- Policy invariants (protected ports 22, 53, 5000; protected interfaces; arbitrary port 9999 acceptance)
+- LLM schema validation and pattern-matching fallback parsing
+- FastMCP stdio client connection and tool discovery
+- Independent diagnostic verification

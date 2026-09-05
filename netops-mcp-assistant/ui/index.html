@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetOps MCP Assistant — AI Network Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand-header">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+        <div class="brand-meta">
+          <h2>NetOps AI</h2>
+          <span class="brand-sub">MCP Architecture v2.0</span>
+        </div>
+      </div>
+
+      <!-- Live Subsystem Health Card -->
+      <div class="system-status-card">
+        <div class="status-card-header">
+          <span class="section-title">Subsystem Health</span>
+          <span class="pulse-indicator" id="overall-status-dot"></span>
+        </div>
+
+        <div class="status-item">
+          <div class="status-label-group">
+            <span class="status-label">LLM Intelligence</span>
+            <span class="status-desc" id="llm-model-desc">Detecting...</span>
+          </div>
+          <span class="badge" id="llm-badge">Offline</span>
+        </div>
+
+        <div class="status-item">
+          <div class="status-label-group">
+            <span class="status-label">FastMCP Server</span>
+            <span class="status-desc" id="mcp-transport-desc">stdio transport</span>
+          </div>
+          <span class="badge" id="mcp-badge">Connecting</span>
+        </div>
+
+        <div class="status-item">
+          <div class="status-label-group">
+            <span class="status-label">Policy Guard</span>
+            <span class="status-desc">Active Ruleset</span>
+          </div>
+          <span class="badge badge-success">Enforced</span>
+        </div>
+      </div>
+
+      <!-- Quick Action Presets -->
+      <div class="presets-section">
+        <span class="section-title">Quick Actions</span>
+        <div class="preset-list">
+          <button class="preset-btn" id="btn-show-rules" onclick="handlePreset('Show all active iptables firewall rules')">
+            <span class="btn-icon">📜</span>
+            <span class="btn-text">List Firewall Rules</span>
+          </button>
+          <button class="preset-btn" id="btn-list-ports" onclick="handlePreset('What ports are currently listening on this machine?')">
+            <span class="btn-icon">🔌</span>
+            <span class="btn-text">Check Listening Ports</span>
+          </button>
+          <button class="preset-btn" id="btn-demo-block" onclick="handlePreset('Block port 9999 TCP with DROP')">
+            <span class="btn-icon">🛡️</span>
+            <span class="btn-text">Block Demo Port 9999</span>
+          </button>
+          <button class="preset-btn" id="btn-demo-allow" onclick="handlePreset('Allow port 9999 TCP')">
+            <span class="btn-icon">🔓</span>
+            <span class="btn-text">Allow Demo Port 9999</span>
+          </button>
+          <button class="preset-btn" id="btn-test-lockout" onclick="handlePreset('Block port 22 immediately')">
+            <span class="btn-icon">⛔</span>
+            <span class="btn-text">Test Port 22 (Lockout Test)</span>
+          </button>
+          <button class="preset-btn" id="btn-ping-test" onclick="handlePreset('Ping 127.0.0.1 to check latency')">
+            <span class="btn-icon">⚡</span>
+            <span class="btn-text">Ping Localhost Diagnostic</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Policies Snapshot -->
+      <div class="policy-snapshot">
+        <span class="section-title">Security Invariants</span>
+        <div class="policy-pill-list">
+          <span class="policy-pill">🚫 Port 22 (SSH)</span>
+          <span class="policy-pill">🚫 Port 53 (DNS)</span>
+          <span class="policy-pill">🚫 Port 5000 (Agent)</span>
+          <span class="policy-pill">🚫 eth0 / lo interface</span>
+          <span class="policy-pill">✅ Arbitrary Ports (1-65535)</span>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn-secondary" id="btn-clear-chat" onclick="clearChat()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+          Clear Workspace
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Chat & Operations Area -->
+    <main class="main-workspace">
+      <!-- Top Navigation Bar -->
+      <header class="top-nav">
+        <div class="nav-status">
+          <div class="connection-pill" id="agent-mode-pill">
+            <span class="mode-dot"></span>
+            <span id="agent-mode-text">Connecting to Python Bridge...</span>
+          </div>
+        </div>
+        <div class="nav-tools">
+          <span class="info-tag" id="registered-tools-count">0 MCP Tools Registered</span>
+          <button class="icon-btn" title="Refresh Status" onclick="refreshStatus()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Message Flow Container -->
+      <section class="chat-container" id="chat-stream">
+        <!-- Welcome Hero -->
+        <div class="welcome-card" id="welcome-hero">
+          <div class="welcome-badge">FAST-MCP + CLAUDE LLM + INDEPENDENT VERIFIER</div>
+          <h1>Autonomous Network Operations</h1>
+          <p>
+            Experience true AI-driven network administration. Natural language commands are parsed into structured MCP tool calls, authoritatively validated against security policies, and independently verified via live kernel inspection and socket probing.
+          </p>
+          <div class="quick-chip-row">
+            <button class="chip-btn" onclick="handlePreset('What is the status of the network firewall?')">"Check firewall status"</button>
+            <button class="chip-btn" onclick="handlePreset('Block port 9999 TCP')">"Block port 9999 TCP"</button>
+            <button class="chip-btn" onclick="handlePreset('Check connectivity to port 9999 on 127.0.0.1')">"Test port 9999 reachability"</button>
+            <button class="chip-btn" onclick="handlePreset('Block port 22')">"Try blocking SSH (22)"</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Input Footer -->
+      <footer class="input-container">
+        <form class="input-form" id="chat-form" onsubmit="event.preventDefault(); submitMessage();">
+          <div class="input-box-wrapper">
+            <textarea
+              id="user-input"
+              placeholder="Ask NetOps AI (e.g. 'Block port 9999 TCP with DROP', 'Check listening ports', 'Set bandwidth limit on eth1 to 20 Mbps')..."
+              rows="1"
+              onkeydown="handleKeyDown(event)"
+            ></textarea>
+            <button type="submit" id="send-button" class="send-btn" title="Send Request">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+          <div class="input-meta">
+            <span>Press <kbd>Enter</kbd> to submit, <kbd>Shift+Enter</kbd> for newline</span>
+            <span class="security-note">🔒 Policy Engine actively guards protected infrastructure</span>
+          </div>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,463 +1,229 @@
-import tkinter as tk
-from tkinter import scrolledtext
-import threading
-import io
-import sys
-import os
+"""
+app.py — Standalone Desktop AI Network Operations Assistant.
 
-# ── Make sure project root is on path ──────────────────────────────────────────
+Technology Stack:
+  HTML/CSS/JavaScript
+          ↓
+  pywebview desktop application window (or local web browser)
+          ↓
+  Python bridge (NetOpsBridge)
+          ↓
+  LLM client (Claude / Groq / OpenRouter / Ollama)
+          ↓
+  MCP client (mcp_client.py)
+          ↓
+  FastMCP server stdio transport (server.py)
+          ↓
+  Authoritative security/policy validation (policies.yaml)
+          ↓
+  Real Linux network operations (iptables, tc, ss)
+          ↓
+  Independent verification (DiagnosticVerifier)
+
+Run:
+  python app.py            # Opens native Desktop Window
+  python app.py --web      # Opens in default Web Browser (Chrome/Edge/Firefox)
+"""
+
+import os
+import sys
+import json
+import socket
+import logging
+import argparse
+import threading
+import webbrowser
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from urllib.parse import urlparse
+from dotenv import load_dotenv
+
+# Ensure root directory is on sys.path
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import assistant
+# Load environment configuration (.env)
+load_dotenv(os.path.join(ROOT, ".env"))
 
-# ── Design Tokens (Antigravity Dark Zinc Theme) ─────────────────────────────
-BG_DARK = "#09090b"        # App main background
-PANEL_BG = "#141417"       # Sidebar & top header background
-CARD_BG = "#1c1c21"        # Cards & message blocks background
-BORDER_COLOR = "#27272a"   # Subtle borders
-TEXT_PRIMARY = "#f4f4f5"   # Primary text
-TEXT_MUTED = "#a1a1aa"     # Secondary text
-ACCENT_INDIGO = "#6366f1"  # Indigo button accent
-ACCENT_HOVER = "#4f46e5"   # Indigo hover
-SUCCESS_GREEN = "#10b981"  # Success green
-DANGER_RED = "#f43f5e"     # Policy rejection / Error red
-WARNING_AMBER = "#f59e0b"  # Processing amber
-CHIP_BG = "#27272a"        # Preset chip bg
-CHIP_HOVER = "#3f3f46"     # Preset chip hover bg
+from assistant import NetOpsBridge
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("NetOpsApp")
 
 
-class NetOpsAgentManager:
+class NetOpsHTTPHandler(SimpleHTTPRequestHandler):
     """
-    Antigravity-Style Agent Manager Desktop GUI for NetOps MCP Assistant.
-    Interfaces exclusively with FastMCP server via stdio mcp_client.py transport.
+    Lightweight embedded HTTP handler that serves the UI static files
+    and provides REST endpoints (/api/status, /api/message, /api/tools)
+    connected directly to the authoritative NetOpsBridge.
     """
+    bridge: NetOpsBridge = None
 
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("NetOps MCP Agent Manager")
-        self.root.geometry("1080x720")
-        self.root.minsize(880, 580)
-        self.root.configure(bg=BG_DARK)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=os.path.join(ROOT, "ui"), **kwargs)
 
-        self.tools_list = []
-        self.mcp_connected = False
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/status":
+            self._send_json(self.bridge.get_status() if self.bridge else {})
+        elif parsed.path == "/api/tools":
+            self._send_json(self.bridge.list_tools() if self.bridge else [])
+        else:
+            super().do_GET()
 
-        self.build_ui()
-        self.init_mcp_connection()
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/message":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            try:
+                data = json.loads(body) if body else {}
+            except Exception:
+                data = {}
+            message = data.get("message", "")
+            response = self.bridge.send_message(message) if self.bridge else {"error": "Bridge offline"}
+            self._send_json(response)
+        else:
+            self.send_error(404, "Not Found")
 
-    def build_ui(self):
-        # Main layout container
-        self.main_container = tk.Frame(self.root, bg=BG_DARK)
-        self.main_container.pack(fill="both", expand=True)
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
-        # ── LEFT SIDEBAR (Width ~280px) ──────────────────────────────────────
-        self.sidebar = tk.Frame(
-            self.main_container,
-            bg=PANEL_BG,
-            width=280,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        self.sidebar.pack(side="left", fill="y", padx=0, pady=0)
-        self.sidebar.pack_propagate(False)
+    def _send_json(self, data: dict):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-        # Sidebar Header / Branding
-        brand_frame = tk.Frame(self.sidebar, bg=PANEL_BG)
-        brand_frame.pack(fill="x", padx=16, pady=(18, 12))
+    def log_message(self, format, *args):
+        # Suppress routine static asset logs
+        if "GET /api/" in format % args or "POST /api/" in format % args:
+            super().log_message(format, *args)
 
-        tk.Label(
-            brand_frame,
-            text="[NETOPS] AGENT MANAGER",
-            bg=PANEL_BG,
-            fg=TEXT_PRIMARY,
-            font=("Liberation Sans", 12, "bold")
-        ).pack(anchor="w")
 
-        tk.Label(
-            brand_frame,
-            text="FastMCP Standalone Control Center",
-            bg=PANEL_BG,
-            fg=TEXT_MUTED,
-            font=("Liberation Sans", 8)
-        ).pack(anchor="w", pady=(2, 0))
+def find_available_port(start_port=8000, max_attempts=50) -> int:
+    """Find an available TCP port starting from start_port."""
+    for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return start_port
 
-        # Divider
-        tk.Frame(self.sidebar, bg=BORDER_COLOR, height=1).pack(fill="x", padx=16, pady=6)
 
-        # MCP Server Connection Card
-        self.server_card = tk.Frame(
-            self.sidebar,
-            bg=CARD_BG,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        self.server_card.pack(fill="x", padx=14, pady=8)
+def start_http_server(bridge: NetOpsBridge, port: int) -> ThreadingHTTPServer:
+    """Start embedded HTTP server in a background daemon thread."""
+    NetOpsHTTPHandler.bridge = bridge
+    server = ThreadingHTTPServer(("127.0.0.1", port), NetOpsHTTPHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
 
-        server_header = tk.Frame(self.server_card, bg=CARD_BG)
-        server_header.pack(fill="x", padx=12, pady=(10, 4))
 
-        self.status_dot = tk.Label(
-            server_header,
-            text="●",
-            bg=CARD_BG,
-            fg=WARNING_AMBER,
-            font=("Liberation Sans", 11)
-        )
-        self.status_dot.pack(side="left", padx=(0, 6))
+def parse_args():
+    parser = argparse.ArgumentParser(description="NetOps MCP AI Desktop Assistant")
+    parser.add_argument("--web", "-w", action="store_true", help="Launch in default Web Browser instead of pywebview window")
+    parser.add_argument("--port", "-p", type=int, default=8000, help="Local HTTP server port (default: 8000)")
+    parser.add_argument("--no-browser", action="store_true", help="Start server without auto-launching browser")
+    parser.add_argument("--debug", action="store_true", help="Enable pywebview debug inspector")
+    return parser.parse_args()
 
-        self.server_status_lbl = tk.Label(
-            server_header,
-            text="CONNECTING...",
-            bg=CARD_BG,
-            fg=TEXT_PRIMARY,
-            font=("Liberation Sans", 9, "bold")
-        )
-        self.server_status_lbl.pack(side="left")
 
-        self.server_detail_lbl = tk.Label(
-            self.server_card,
-            text="Transport: stdio | Server: server.py",
-            bg=CARD_BG,
-            fg=TEXT_MUTED,
-            font=("Liberation Sans", 8)
-        )
-        self.server_detail_lbl.pack(anchor="w", padx=12, pady=(0, 10))
+def main():
+    args = parse_args()
+    logger.info("Initializing NetOps MCP Assistant Subsystems...")
 
-        # Registered Tools Section
-        tools_lbl_frame = tk.Frame(self.sidebar, bg=PANEL_BG)
-        tools_lbl_frame.pack(fill="x", padx=16, pady=(12, 4))
+    # Instantiate the Python bridge (connects LLM + FastMCP server via stdio)
+    bridge = NetOpsBridge()
 
-        tk.Label(
-            tools_lbl_frame,
-            text="DISCOVERED MCP TOOLS",
-            bg=PANEL_BG,
-            fg=TEXT_MUTED,
-            font=("Liberation Sans", 8, "bold")
-        ).pack(anchor="w")
+    ui_path = os.path.join(ROOT, "ui", "index.html")
+    if not os.path.isfile(ui_path):
+        logger.error(f"UI file not found: {ui_path}")
+        sys.exit(1)
 
-        self.tools_container = tk.Frame(self.sidebar, bg=PANEL_BG)
-        self.tools_container.pack(fill="x", padx=14, pady=4)
+    port = find_available_port(args.port)
+    server = start_http_server(bridge, port)
+    app_url = f"http://127.0.0.1:{port}"
+    logger.info(f"NetOps Web Server active at: {app_url}")
 
-        # Default fallback tool badges
-        self.render_tool_badges(["configure_firewall", "set_bandwidth_limit", "run_diagnostics", "list_firewall_rules"])
-
-        # Policy Overview Card
-        policy_card = tk.Frame(
-            self.sidebar,
-            bg=CARD_BG,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        policy_card.pack(fill="x", padx=14, pady=(12, 8))
-
-        tk.Label(
-            policy_card,
-            text="SECURITY POLICY BOUNDARY",
-            bg=CARD_BG,
-            fg=ACCENT_INDIGO,
-            font=("Liberation Sans", 8, "bold")
-        ).pack(anchor="w", padx=12, pady=(8, 4))
-
-        policy_text = (
-            "• Protected Ports: 22, 53, 5000\n"
-            "• Protected Ifaces: eth0, lo\n"
-            "• Bandwidth Cap: 1 - 100 Mbps\n"
-            "• Permitted Actions: ACCEPT, DROP, REJECT"
-        )
-
-        tk.Label(
-            policy_card,
-            text=policy_text,
-            bg=CARD_BG,
-            fg=TEXT_MUTED,
-            justify="left",
-            font=("Liberation Sans", 8)
-        ).pack(anchor="w", padx=12, pady=(0, 8))
-
-        # Quick Actions Header
-        tk.Label(
-            self.sidebar,
-            text="QUICK ACTION CHIPS",
-            bg=PANEL_BG,
-            fg=TEXT_MUTED,
-            font=("Liberation Sans", 8, "bold")
-        ).pack(anchor="w", padx=16, pady=(12, 4))
-
-        # Preset Quick Chips
-        chips_frame = tk.Frame(self.sidebar, bg=PANEL_BG)
-        chips_frame.pack(fill="x", padx=14, pady=4)
-
-        presets = [
-            ("[BLOCK] Port 8080", "block port 8080"),
-            ("[ALLOW] Port 443", "allow port 443"),
-            ("[PING] 127.0.0.1", "ping 127.0.0.1"),
-            ("[LIST] Firewall Rules", "list firewall rules"),
-            ("[TEST] Block Port 22", "block port 22"),  # Policy test
-        ]
-
-        for label, cmd in presets:
-            btn = tk.Button(
-                chips_frame,
-                text=label,
-                command=lambda c=cmd: self.trigger_quick_cmd(c),
-                bg=CHIP_BG,
-                fg=TEXT_PRIMARY,
-                activebackground=CHIP_HOVER,
-                activeforeground=TEXT_PRIMARY,
-                relief="flat",
-                borderwidth=0,
-                anchor="w",
-                font=("Liberation Sans", 8),
-                padx=10,
-                pady=5
-            )
-            btn.pack(fill="x", pady=2)
-
-        # ── RIGHT MAIN WORKSPACE ──────────────────────────────────────────────
-        self.workspace = tk.Frame(self.main_container, bg=BG_DARK)
-        self.workspace.pack(side="right", fill="both", expand=True)
-
-        # Top Header Bar
-        self.header_bar = tk.Frame(
-            self.workspace,
-            bg=PANEL_BG,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        self.header_bar.pack(fill="x", padx=0, pady=0)
-
-        tk.Label(
-            self.header_bar,
-            text="NETOPS AGENT EXECUTION FEED",
-            bg=PANEL_BG,
-            fg=TEXT_PRIMARY,
-            font=("Liberation Sans", 11, "bold")
-        ).pack(side="left", padx=20, pady=14)
-
-        self.status_lbl = tk.Label(
-            self.header_bar,
-            text="STATUS: READY",
-            bg=PANEL_BG,
-            fg=SUCCESS_GREEN,
-            font=("Liberation Sans", 9, "bold")
-        )
-        self.status_lbl.pack(side="right", padx=20)
-
-        # Chat / Execution Activity Feed Scrollview
-        feed_container = tk.Frame(self.workspace, bg=BG_DARK)
-        feed_container.pack(fill="both", expand=True, padx=20, pady=12)
-
-        self.chat = scrolledtext.ScrolledText(
-            feed_container,
-            wrap=tk.WORD,
-            bg=PANEL_BG,
-            fg=TEXT_PRIMARY,
-            insertbackground=TEXT_PRIMARY,
-            font=("DejaVu Sans Mono", 9.5),
-            relief="flat",
-            borderwidth=0,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        self.chat.pack(fill="both", expand=True, padx=0, pady=0)
-
-        # Text Formatting Tags
-        self.chat.tag_config("user_hdr", foreground="#818cf8", font=("Liberation Sans", 10, "bold"))
-        self.chat.tag_config("agent_hdr", foreground=SUCCESS_GREEN, font=("Liberation Sans", 10, "bold"))
-        self.chat.tag_config("step_info", foreground="#60a5fa")
-        self.chat.tag_config("step_warn", foreground=WARNING_AMBER)
-        self.chat.tag_config("step_pass", foreground=SUCCESS_GREEN)
-        self.chat.tag_config("step_reject", foreground=DANGER_RED, font=("DejaVu Sans Mono", 9.5, "bold"))
-        self.chat.tag_config("muted", foreground=TEXT_MUTED)
-
-        # Welcome Text
-        self.chat.insert(tk.END, "NETOPS MCP AGENT MANAGER\n", "agent_hdr")
-        self.chat.insert(
-            tk.END,
-            "Connected to FastMCP stdio server via mcp_client.py.\n"
-            "All commands undergo authoritative server-side security policy check before execution.\n\n",
-            "muted"
-        )
-        self.chat.insert(
-            tk.END,
-            "Example Natural Language Prompts:\n"
-            "  • block port 8080\n"
-            "  • allow tcp port 443\n"
-            "  • limit bandwidth to 10 Mbps on eth1\n"
-            "  • ping 127.0.0.1\n"
-            "  • list firewall rules\n"
-            "  • block port 22  (Demonstrates policy rejection)\n\n",
-            "muted"
-        )
-
-        # Bottom Input Area
-        input_container = tk.Frame(self.workspace, bg=BG_DARK)
-        input_container.pack(fill="x", padx=20, pady=(4, 16))
-
-        input_wrapper = tk.Frame(
-            input_container,
-            bg=PANEL_BG,
-            highlightbackground=BORDER_COLOR,
-            highlightthickness=1
-        )
-        input_wrapper.pack(fill="x", expand=True)
-
-        self.prompt_entry = tk.Entry(
-            input_wrapper,
-            bg=PANEL_BG,
-            fg=TEXT_PRIMARY,
-            insertbackground=TEXT_PRIMARY,
-            relief="flat",
-            font=("Liberation Sans", 11),
-            borderwidth=0
-        )
-        self.prompt_entry.pack(side="left", fill="x", expand=True, ipady=12, padx=14)
-        self.prompt_entry.bind("<Return>", lambda e: self.send_command())
-
-        self.send_btn = tk.Button(
-            input_wrapper,
-            text="RUN AGENT >",
-            command=self.send_command,
-            bg=ACCENT_INDIGO,
-            fg="white",
-            activebackground=ACCENT_HOVER,
-            activeforeground="white",
-            relief="flat",
-            borderwidth=0,
-            font=("Liberation Sans", 9, "bold"),
-            padx=16,
-            pady=8
-        )
-        self.send_btn.pack(side="right", padx=6, pady=6)
-
-        self.prompt_entry.focus_set()
-
-    def render_tool_badges(self, tools: list):
-        for widget in self.tools_container.winfo_children():
-            widget.destroy()
-
-        for tname in tools:
-            badge = tk.Frame(
-                self.tools_container,
-                bg=CARD_BG,
-                highlightbackground=BORDER_COLOR,
-                highlightthickness=1
-            )
-            badge.pack(fill="x", pady=2)
-
-            tk.Label(
-                badge,
-                text=f"[TOOL] {tname}",
-                bg=CARD_BG,
-                fg=TEXT_PRIMARY,
-                font=("Liberation Sans", 8)
-            ).pack(anchor="w", padx=8, pady=4)
-
-    def init_mcp_connection(self):
-        threading.Thread(target=self._connect_mcp_bg, daemon=True).start()
-
-    def _connect_mcp_bg(self):
+    if args.web:
+        logger.info(f"Opening in default web browser: {app_url}")
+        if not args.no_browser:
+            webbrowser.open(app_url)
+        print(f"\n=======================================================")
+        print(f"  NetOps AI Assistant is running!")
+        print(f"  Access URL: {app_url}")
+        print(f"  Press Ctrl+C to stop.")
+        print(f"=======================================================\n")
         try:
-            from mcp_client import get_mcp_client
-            client = get_mcp_client()
-            tools = client.list_tools()
-            self.tools_list = [t["name"] for t in tools]
-            self.mcp_connected = True
+            while True:
+                threading.Event().wait(1)
+        except KeyboardInterrupt:
+            logger.info("Stopping NetOps Assistant...")
+        finally:
+            if bridge.mcp:
+                bridge.mcp.close()
+            server.shutdown()
+        return
 
-            self.root.after(0, self._on_mcp_connected_ui)
-        except Exception as e:
-            self.root.after(0, lambda: self._on_mcp_error_ui(str(e)))
+    # Attempt native desktop window via pywebview
+    try:
+        import webview
+        has_webview = True
+    except ImportError:
+        has_webview = False
 
-    def _on_mcp_connected_ui(self):
-        self.status_dot.config(fg=SUCCESS_GREEN)
-        self.server_status_lbl.config(text="MCP CONNECTED", fg=SUCCESS_GREEN)
-        self.render_tool_badges(self.tools_list)
-        self.status_lbl.config(text="STATUS: READY (MCP ACTIVE)", fg=SUCCESS_GREEN)
-
-    def _on_mcp_error_ui(self, err_msg: str):
-        self.status_dot.config(fg=DANGER_RED)
-        self.server_status_lbl.config(text="DISCONNECTED", fg=DANGER_RED)
-        self.status_lbl.config(text=f"STATUS: MCP ERROR ({err_msg})", fg=DANGER_RED)
-
-    def trigger_quick_cmd(self, cmd_text: str):
-        self.prompt_entry.delete(0, tk.END)
-        self.prompt_entry.insert(0, cmd_text)
-        self.send_command()
-
-    def send_command(self):
-        cmd = self.prompt_entry.get().strip()
-        if not cmd:
-            return
-
-        self.prompt_entry.delete(0, tk.END)
-
-        # User message UI entry
-        self.chat.insert(tk.END, "\nUser Promoted Intent\n", "user_hdr")
-        self.chat.insert(tk.END, f"  > {cmd}\n\n", "TEXT_PRIMARY")
-        self.chat.see(tk.END)
-
-        # Disable input while running
-        self.send_btn.config(state=tk.DISABLED, bg=BORDER_COLOR)
-        self.status_lbl.config(text="STATUS: AGENT EXECUTING...", fg=WARNING_AMBER)
-
-        # Run non-blocking execution thread
-        threading.Thread(target=self._execute_bg, args=(cmd,), daemon=True).start()
-
-    def _execute_bg(self, message: str):
-        buffer = io.StringIO()
+    if not has_webview:
+        logger.warning("pywebview is not installed. Opening in default web browser instead...")
+        webbrowser.open(app_url)
         try:
-            assistant.set_output(buffer)
-            parsed = assistant.parse_command(message)
-            intent = parsed["intent"]
+            while True:
+                threading.Event().wait(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if bridge.mcp:
+                bridge.mcp.close()
+            server.shutdown()
+        return
 
-            if intent == "unknown":
-                output = "Command not recognized. Type 'help' for examples."
-            elif intent == "firewall":
-                assistant.handle_firewall(parsed["params"])
-                output = buffer.getvalue()
-            elif intent == "bandwidth":
-                assistant.handle_bandwidth(parsed["params"])
-                output = buffer.getvalue()
-            elif intent == "diagnostics":
-                assistant.handle_diagnostics(parsed["params"])
-                output = buffer.getvalue()
-            elif intent == "list_rules":
-                assistant.handle_list_rules()
-                output = buffer.getvalue()
-            else:
-                output = "Unknown operation."
-        except Exception as e:
-            output = f"Execution Error: {str(e)}"
+    logger.info(f"Opening native desktop window: {app_url}...")
+    window = webview.create_window(
+        title="NetOps MCP Assistant — AI Network Operations",
+        url=app_url,
+        js_api=bridge,
+        width=1260,
+        height=860,
+        min_size=(960, 640),
+        background_color="#080c14"
+    )
 
-        self.root.after(0, lambda: self.show_result(output))
-
-    def show_result(self, output: str):
-        self.chat.insert(tk.END, "Agent Activity & MCP Result\n", "agent_hdr")
-
-        # Color-code output lines for rich feedback
-        for line in output.splitlines():
-            if "POLICY REJECT" in line or "POLICY REJECTED" in line:
-                self.chat.insert(tk.END, line + "\n", "step_reject")
-            elif "SUCCESS" in line or "Rule applied" in line or "PASS" in line:
-                self.chat.insert(tk.END, line + "\n", "step_pass")
-            elif "Intent identified" in line or "Invoking MCP tool" in line:
-                self.chat.insert(tk.END, line + "\n", "step_info")
-            elif "Checking policy" in line:
-                self.chat.insert(tk.END, line + "\n", "step_warn")
-            else:
-                self.chat.insert(tk.END, line + "\n")
-
-        self.chat.insert(tk.END, "\n")
-        self.chat.see(tk.END)
-
-        self.send_btn.config(state=tk.NORMAL, bg=ACCENT_INDIGO)
-        self.status_lbl.config(text="STATUS: READY (MCP ACTIVE)", fg=SUCCESS_GREEN)
-        self.prompt_entry.focus_set()
+    try:
+        webview.start(debug=args.debug)
+    except Exception as e:
+        logger.warning(f"Native window encountered an issue: {e}")
+        logger.info(f"Falling back to web browser: {app_url}")
+        webbrowser.open(app_url)
+        try:
+            while True:
+                threading.Event().wait(1)
+        except KeyboardInterrupt:
+            pass
+    finally:
+        logger.info("Application closed. Cleaning up MCP stdio connections...")
+        if bridge.mcp:
+            bridge.mcp.close()
+        server.shutdown()
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = NetOpsAgentManager(root)
-    root.mainloop()
+    main()

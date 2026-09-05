@@ -1,4 +1,4 @@
-version: "1.0"
+version: "2.0"
 security_policy:
   protected_interfaces:
     - "eth0"
@@ -7,16 +7,16 @@ security_policy:
     - 22
     - 53
     - 5000
-  allowed_ports:
-    - 80
-    - 443
-    - 8080
-    - 9090
-    - 5201
+  # Any valid port (1-65535) is permitted unless it appears in protected_ports.
+  # This replaces the old allowed_ports allowlist that blocked arbitrary ports.
+  allow_arbitrary_ports: true
   allowed_actions:
     - "ACCEPT"
     - "DROP"
     - "REJECT"
+  allowed_protocols:
+    - "tcp"
+    - "udp"
   forbidden_commands:
     - "FLUSH_ALL"
     - "iptables -F"

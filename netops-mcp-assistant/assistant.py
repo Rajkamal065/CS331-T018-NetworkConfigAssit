@@ -1,477 +1,364 @@
-#!/usr/bin/env python3
 """
-NetOps MCP Assistant — Interactive Terminal CLI
-Run: python assistant.py
+assistant.py — Python Bridge & Orchestrator for NetOps MCP Assistant.
+
+Acts as the authoritative bridge between the Desktop UI (pywebview) / CLI and:
+  1. LLM Client (Intent interpretation with Claude / Groq / OpenRouter / Ollama)
+  2. MCP Client (Stdio transport to FastMCP server)
+  3. Independent Verification Engine (Kernel rule check + TCP socket probes)
+
+Security Invariants:
+  - The LLM is an intent interpreter, NEVER a security authority.
+  - The MCP server authoritatively validates and enforces policies.
+  - The verification engine independently verifies live network state.
+  - No shell=True or unvalidated user input is executed.
 """
 
 import os
-import re
 import sys
-import time
 import json
-import ipaddress
+import time
+import logging
+from typing import Dict, Any, List, Optional
 
-# ── Make sure project root is on the path ────────────────────────────────────
+# Ensure root is on sys.path
 ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
-import yaml
-try:
-    import readline  # enables arrow keys, history in the prompt
-except ImportError:
-    pass
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.rule import Rule
-from rich import box
+from llm_client import LLMClient
+from mcp_client import get_mcp_client, MCPClient
 
-console = Console()
-
-def set_output(output):
-    global console
-    console = Console(file=output, force_terminal=False)
-# ── Load Policies ─────────────────────────────────────────────────────────────
-POLICY_PATH = os.path.join(ROOT, "rules", "policies.yaml")
-with open(POLICY_PATH) as f:
-    POLICIES = yaml.safe_load(f)
-
-from mcp_client import get_mcp_client
+logger = logging.getLogger("NetOpsBridge")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
-# ── Step printer — the core "live execution" feel ─────────────────────────────
-def step(icon: str, label: str, detail: str = "", color: str = "cyan", delay: float = 0.4):
-    """Print a single execution step with icon, label, and optional detail."""
-    time.sleep(delay)
-    line = Text()
-    line.append(f"  {icon}  ", style="bold")
-    line.append(label, style=f"bold {color}")
-    if detail:
-        line.append(f"  →  {detail}", style="dim white")
-    console.print(line)
+class NetOpsBridge:
+    """
+    Desktop JavaScript API Bridge for pywebview.
+    Methods on this class are directly callable from JavaScript via `window.pywebview.api.<method>()`.
+    """
 
+    def __init__(self):
+        self.llm = LLMClient()
+        self.mcp: Optional[MCPClient] = None
+        self.conversation_history: List[Dict[str, str]] = []
+        self._init_mcp()
 
-def step_cmd(cmd: str, delay: float = 0.3):
-    """Print the actual shell command being run."""
-    time.sleep(delay)
-    console.print(f"     [dim]$ {cmd}[/dim]")
-
-
-def ok(msg: str):
-    console.print(f"\n  [bold green]✔  {msg}[/bold green]\n")
-
-
-def fail(msg: str):
-    console.print(f"\n  [bold red]✘  {msg}[/bold red]\n")
-
-
-def warn(msg: str):
-    console.print(f"\n  [bold yellow]⚠  {msg}[/bold yellow]\n")
-
-
-def result_box(title: str, lines: list[tuple], success: bool = True):
-    """Print a result summary box."""
-    color = "green" if success else "red"
-    content = "\n".join(f"  [dim]{k}[/dim]  [bold white]{v}[/bold white]" for k, v in lines)
-    console.print(Panel(content, title=f"[bold {color}]{title}[/bold {color}]",
-                         border_style=color, box=box.ROUNDED, padding=(0, 1)))
-    console.print()
-
-
-# ── Policy helpers ────────────────────────────────────────────────────────────
-def validate_firewall_policy(action: str, port: int, protocol: str = "tcp", source_ip: str = ""):
-    sec = POLICIES["security_policy"]
-
-    if action not in sec["allowed_actions"]:
-        raise ValueError(
-            f"Action '{action}' is not permitted. "
-            f"Allowed: {sec['allowed_actions']}"
-        )
-
-    if port < 1 or port > 65535:
-        raise ValueError(
-            f"Invalid port {port}. Port must be between 1 and 65535."
-        )
-
-    if port in sec["protected_ports"]:
-        raise ValueError(
-            f"Port {port} is PROTECTED by security policy "
-            f"(prevents lockouts)."
-        )
-
-    if port not in sec["allowed_ports"]:
-        raise ValueError(
-            f"Port {port} is not allowed by security policy. "
-            f"Allowed ports: {sec['allowed_ports']}"
-        )
-
-    if protocol not in {"tcp", "udp"}:
-        raise ValueError(
-            f"Protocol '{protocol}' is not permitted. "
-            f"Use tcp or udp."
-        )
-
-    if source_ip:
+    def _init_mcp(self):
+        """Connect to MCP server via stdio transport."""
         try:
-            ipaddress.IPv4Address(source_ip)
-        except ipaddress.AddressValueError:
-            raise ValueError(
-                f"Invalid source IP address: {source_ip}"
-            )
+            self.mcp = get_mcp_client()
+            logger.info("Connected to FastMCP server via stdio transport.")
+        except Exception as e:
+            logger.error(f"Failed to initialize MCP client: {e}")
+            self.mcp = None
 
-    return True
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Return the real-time operational status of all subsystems:
+        - LLM provider and model
+        - MCP connection state
+        - Registered MCP tools
+        """
+        llm_info = self.llm.status_info
+        mcp_connected = False
+        tools_count = 0
 
-def validate_ip_address(ip: str) -> bool:
-    """Return True only for a valid IPv4 address."""
-    try:
-        ipaddress.IPv4Address(ip)
-        return True
-    except ipaddress.AddressValueError:
-        return False
-# ── Command parser ────────────────────────────────────────────────────────────
-def parse_command(message: str) -> dict:
-    msg = message.lower().strip()
-
-    # LIST RULES
-    if re.search(r"\b(list|show|display|get)\b.*\b(rule|firewall|iptables)\b", msg) or \
-       re.search(r"\b(firewall|iptables)\b.*\b(list|show|rules?)\b", msg) or \
-       msg in ("list rules", "show rules", "firewall rules", "rules"):
-        return {"intent": "list_rules", "params": {}}
-
-    # DIAGNOSTICS
-    diag = re.search(
-        r"\b(ping|test|check|diagnose|diagnostic|reachability|iperf)\b",
-        msg
-    )
-
-    if diag:
-        # Extract IPv4 address separately
-        ip_match = re.search(
-            r"\b\d{1,3}(?:\.\d{1,3}){3}\b",
-            msg
-        )
-
-        if ip_match:
-            target = ip_match.group(0)
-
-            # Make sure it is a real IPv4 address
-            if not validate_ip_address(target):
-                return {
-                    "intent": "unknown",
-                    "params": {}
-                }
-        else:
-            target = "127.0.0.1"
-
-        if target == "localhost":
-            target = "127.0.0.1"
-
-        mode = (
-            "iperf3"
-            if re.search(r"\b(iperf|throughput|speed)\b", msg)
-            else "ping"
-        )
+        if self.mcp and self.mcp._connected:
+            mcp_connected = True
+            try:
+                tools = self.mcp.list_tools()
+                tools_count = len(tools)
+            except Exception:
+                pass
 
         return {
-            "intent": "diagnostics",
-            "params": {
-                "target_ip": target,
-                "mode": mode
+            "llm": llm_info,
+            "mcp": {
+                "connected": mcp_connected,
+                "tools_count": tools_count,
+                "transport": "stdio"
+            },
+            "system": {
+                "platform": sys.platform,
+                "python": sys.version.split()[0]
             }
         }
-    # BANDWIDTH
-    bw = re.search(
-        r"\b(limit|throttle|set|cap|restrict)\b.*\b(bandwidth|speed|rate|bw)\b"
-        r".*?(\d+)\s*(mb|mbps|mbit|m)?", msg
-    ) or re.search(r"\b(bandwidth|speed|rate)\b.*?(\d+)\s*(mb|mbps|mbit|m)?", msg)
-    if bw:
-        rate = next((int(g) for g in bw.groups() if g and str(g).isdigit()), None)
-        iface = (re.search(r"\b(eth\d+|ens\d+|eno\d+|enp\d+s\d+|lo|wlan\d+)\b", msg) or None)
-        iface = iface.group(1) if iface else "eth0"
-        if rate:
-            return {"intent": "bandwidth", "params": {"interface": iface, "rate_mbps": rate}}
 
-     # FIREWALL
-    # Require the word "port" so IPv4 addresses are never
-    # mistaken for port numbers.
+    def list_tools(self) -> List[Dict[str, Any]]:
+        """List all tools registered on the FastMCP server."""
+        if not self.mcp or not self.mcp._connected:
+            self._init_mcp()
+        if self.mcp and self.mcp._connected:
+            try:
+                return self.mcp.list_tools()
+            except Exception as e:
+                logger.error(f"Error listing MCP tools: {e}")
+        return []
 
-    fw = re.search(
-        r"\b(block|drop|reject|deny|allow|accept|permit|open)\b"
-        r".*?\bport\s+(\d{1,5})\b",
-        msg
-    )
+    def send_message(self, message: str) -> Dict[str, Any]:
+        """
+        Process user natural language message through the complete pipeline:
+        User -> LLM Intent -> MCP Policy & Tool Call -> Verification -> Structured Response
+        """
+        message = (message or "").strip()
+        if not message:
+            return {"type": "error", "error": "Empty message"}
 
-    if fw:
-        action_word = fw.group(1)
-        port = int(fw.group(2))
+        timeline: List[Dict[str, Any]] = []
 
-        block_words = {
-            "block",
-            "drop",
-            "reject",
-            "deny"
-        }
+        # Step 1: User Request Logged
+        timeline.append({
+            "step": "USER_INPUT",
+            "title": "Natural Language Request",
+            "detail": message,
+            "status": "COMPLETED",
+            "timestamp": time.time()
+        })
 
-        allow_words = {
-            "allow",
-            "accept",
-            "permit",
-            "open"
-        }
+        # Step 2: LLM Intent Interpretation
+        t0 = time.time()
+        llm_result = self.llm.interpret(message, self.conversation_history)
+        llm_elapsed = round((time.time() - t0) * 1000, 1)
 
-        if action_word in block_words:
-            action = "DROP"
-        elif action_word in allow_words:
-            action = "ACCEPT"
-        else:
-            action = "DROP"
+        # Record in history
+        self.conversation_history.append({"role": "user", "content": message})
 
-        protocol_match = re.search(
-            r"\b(tcp|udp|icmp)\b",
-            msg
-        )
+        intent_type = llm_result.get("type", "message")
+        ai_response = llm_result.get("ai_response") or llm_result.get("message", "")
 
-        if protocol_match:
-            proto = protocol_match.group(1)
-
-            if proto not in {"tcp", "udp"}:
-                return {
-                    "intent": "unknown",
-                    "params": {}
-                }
-        else:
-            proto = "tcp"
-
-        src_match = re.search(
-            r"\bfrom\s+(\d{1,3}(?:\.\d{1,3}){3})\b",
-            msg
-        )
-
-        if src_match:
-            src = src_match.group(1)
-
-            if not validate_ip_address(src):
-                return {
-                    "intent": "unknown",
-                    "params": {}
-                }
-        else:
-            src = ""
-
-        if 1 <= port <= 65535:
+        if intent_type == "message":
+            # Conversational reply only
+            self.conversation_history.append({"role": "assistant", "content": ai_response})
+            timeline.append({
+                "step": "LLM_INTERPRETATION",
+                "title": f"AI Intent Interpreter ({self.llm.provider or 'Fallback Parser'})",
+                "detail": f"Interpreted as conversational query ({llm_elapsed}ms)",
+                "status": "COMPLETED",
+                "timestamp": time.time()
+            })
             return {
-                "intent": "firewall",
-                "params": {
+                "type": "conversation",
+                "content": ai_response,
+                "timeline": timeline
+            }
+
+        if intent_type == "error":
+            timeline.append({
+                "step": "LLM_ERROR",
+                "title": "LLM Interpretation Error",
+                "detail": llm_result.get("message", "Unknown LLM error"),
+                "status": "FAILED",
+                "timestamp": time.time()
+            })
+            # Check fallback
+            if "fallback" in llm_result:
+                llm_result = llm_result["fallback"]
+                intent_type = llm_result.get("type", "message")
+            else:
+                return {
+                    "type": "error",
+                    "error": llm_result.get("message"),
+                    "timeline": timeline
+                }
+
+        # Handle tool call intent
+        tool_name = llm_result.get("tool")
+        tool_args = llm_result.get("arguments", {})
+
+        timeline.append({
+            "step": "LLM_INTENT",
+            "title": f"Intent Resolved by {self.llm.provider.upper() if self.llm.provider else 'ENGINE'}",
+            "detail": f"Tool: {tool_name} | Arguments: {json.dumps(tool_args)} ({llm_elapsed}ms)",
+            "status": "COMPLETED",
+            "timestamp": time.time()
+        })
+
+        # Step 3: MCP Tool Invocation via stdio
+        if not self.mcp or not self.mcp._connected:
+            self._init_mcp()
+
+        if not self.mcp or not self.mcp._connected:
+            timeline.append({
+                "step": "MCP_ERROR",
+                "title": "MCP Transport Connection Failed",
+                "detail": "Cannot reach FastMCP server process via stdio transport.",
+                "status": "FAILED",
+                "timestamp": time.time()
+            })
+            return {
+                "type": "error",
+                "error": "FastMCP server is disconnected.",
+                "timeline": timeline
+            }
+
+        timeline.append({
+            "step": "MCP_DISPATCH",
+            "title": "MCP Authoritative Policy & Tool Dispatch",
+            "detail": f"Calling FastMCP stdio tool: {tool_name}",
+            "status": "RUNNING",
+            "timestamp": time.time()
+        })
+
+        try:
+            mcp_raw_output = self.mcp.call_tool(tool_name, tool_args)
+        except Exception as e:
+            timeline.append({
+                "step": "MCP_EXECUTION_ERROR",
+                "title": "MCP Execution Exception",
+                "detail": str(e),
+                "status": "FAILED",
+                "timestamp": time.time()
+            })
+            return {
+                "type": "error",
+                "error": f"MCP execution failed: {str(e)}",
+                "timeline": timeline
+            }
+
+        # Parse MCP response
+        mcp_data = {}
+        try:
+            mcp_data = json.loads(mcp_raw_output)
+        except Exception:
+            mcp_data = {"status": "RAW", "output": mcp_raw_output}
+
+        mcp_status = mcp_data.get("status", "SUCCESS")
+        is_policy_rejected = mcp_status == "POLICY_REJECTION"
+
+        if is_policy_rejected:
+            timeline.append({
+                "step": "POLICY_REJECTION",
+                "title": "Authoritative Policy Rejection",
+                "detail": mcp_data.get("error", "Action prohibited by security policy"),
+                "status": "REJECTED",
+                "timestamp": time.time()
+            })
+            return {
+                "type": "policy_rejection",
+                "tool": tool_name,
+                "arguments": tool_args,
+                "error": mcp_data.get("error"),
+                "timeline": timeline,
+                "ai_response": ai_response
+            }
+
+        timeline.append({
+            "step": "MCP_SUCCESS",
+            "title": "MCP Execution Succeeded",
+            "detail": mcp_data.get("message") or mcp_data.get("output") or json.dumps(mcp_data),
+            "status": "COMPLETED",
+            "timestamp": time.time()
+        })
+
+        # Step 4: Independent Verification
+        verification_data = None
+        if tool_name == "configure_firewall":
+            action = tool_args.get("action", "DROP")
+            port = int(tool_args.get("port", 0))
+            proto = tool_args.get("protocol", "tcp")
+
+            timeline.append({
+                "step": "VERIFICATION_PROBE",
+                "title": "Independent Dual-Layer Verification",
+                "detail": f"Inspecting iptables kernel table and probing TCP socket on port {port}...",
+                "status": "RUNNING",
+                "timestamp": time.time()
+            })
+
+            try:
+                v_raw = self.mcp.call_tool("validate_firewall_change", {
                     "action": action,
                     "port": port,
-                    "protocol": proto,
-                    "source_ip": src
+                    "protocol": proto
+                })
+                verification_data = json.loads(v_raw)
+            except Exception as ve:
+                verification_data = {
+                    "status": "ERROR",
+                    "summary": f"Verification error: {str(ve)}"
                 }
-            }
 
-    return {"intent": "unknown", "params": {}}
+            timeline.append({
+                "step": "VERIFICATION_RESULT",
+                "title": f"Verification: {verification_data.get('status', 'COMPLETED')}",
+                "detail": verification_data.get("summary", ""),
+                "status": "VERIFIED" if verification_data.get("status") == "VERIFIED" else "WARNING",
+                "timestamp": time.time()
+            })
 
-# ── Command handlers ──────────────────────────────────────────────────────────
-def handle_firewall(params: dict):
-    action     = params["action"]
-    port       = params["port"]
-    protocol   = params["protocol"]
-    source_ip  = params.get("source_ip", "")
+        elif tool_name == "set_bandwidth_limit":
+            verification_data = mcp_data.get("diagnostic")
 
-    step("🔍", "Intent identified", f"firewall  →  {action} port {port}/{protocol}", "cyan")
-    step("🛡️ ", "Checking policy via MCP Server", f"target port: {port}", "yellow", 0.3)
-    step("📡", "Invoking MCP tool", f"configure_firewall({action}, {port}, {protocol})", "blue", 0.3)
+        return {
+            "type": "operation_success",
+            "tool": tool_name,
+            "arguments": tool_args,
+            "result": mcp_data,
+            "verification": verification_data,
+            "timeline": timeline,
+            "ai_response": ai_response
+        }
 
-    client = get_mcp_client()
-    res_text = client.call_tool("configure_firewall", {
-        "action": action,
-        "port": port,
-        "protocol": protocol,
-        "source_ip": source_ip
-    })
+    def get_firewall_rules(self) -> Dict[str, Any]:
+        """Fetch active firewall rules directly from MCP."""
+        if not self.mcp or not self.mcp._connected:
+            self._init_mcp()
+        try:
+            raw = self.mcp.call_tool("list_firewall_rules", {})
+            return json.loads(raw)
+        except Exception as e:
+            return {"status": "ERROR", "error": str(e)}
 
-    if "POLICY REJECTION" in res_text:
-        reason = res_text.replace("POLICY REJECTION:", "").strip()
-        step("🚫", "POLICY REJECTED BY MCP SERVER", reason, "red", 0.2)
-        fail(reason)
-    elif "SUCCESS" in res_text:
-        step("✅", "Rule applied by MCP Server", res_text, "green", 0.2)
-        result_box("Firewall Rule Applied (via MCP)", [
-            ("Action",       action),
-            ("Port",         f"{port}/{protocol}"),
-            ("Source IP",    source_ip or "any"),
-            ("MCP Response", res_text),
-        ], success=True)
-    else:
-        step("❌", "Command failed", res_text, "red", 0.2)
-        result_box("Command Failed", [("Error", res_text)], success=False)
+    def get_listening_ports(self) -> Dict[str, Any]:
+        """Fetch active listening ports directly from MCP."""
+        if not self.mcp or not self.mcp._connected:
+            self._init_mcp()
+        try:
+            raw = self.mcp.call_tool("check_listening_ports", {})
+            return json.loads(raw)
+        except Exception as e:
+            return {"status": "ERROR", "error": str(e)}
 
-
-def handle_bandwidth(params: dict):
-    interface = params["interface"]
-    rate_mbps = params["rate_mbps"]
-
-    step("🔍", "Intent identified", f"set bandwidth  →  {rate_mbps} Mbps on {interface}", "cyan")
-    step("🛡️ ", "Checking bandwidth policy via MCP Server", f"interface: {interface}, rate: {rate_mbps} Mbps", "yellow", 0.3)
-    step("📡", "Invoking MCP tool", f"set_bandwidth_limit({interface}, {rate_mbps})", "blue", 0.3)
-
-    client = get_mcp_client()
-    res_text = client.call_tool("set_bandwidth_limit", {
-        "interface": interface,
-        "rate_mbps": rate_mbps
-    })
-
-    if "POLICY REJECTION" in res_text:
-        reason = res_text.replace("POLICY REJECTION:", "").strip()
-        step("🚫", "POLICY REJECTED BY MCP SERVER", reason, "red", 0.2)
-        fail(reason)
-    elif "SUCCESS" in res_text:
-        step("✅", "Bandwidth limit applied by MCP Server", res_text, "green", 0.2)
-        result_box("Bandwidth Limit Applied (via MCP)", [
-            ("Interface", interface),
-            ("Rate",      f"{rate_mbps} Mbps"),
-            ("MCP Result", res_text)
-        ], success=True)
-    else:
-        step("❌", "Command failed", res_text, "red", 0.2)
-        fail(res_text)
+    def clear_history(self) -> bool:
+        """Reset conversation context."""
+        self.conversation_history.clear()
+        return True
 
 
-def handle_diagnostics(params: dict):
-    target_ip = params["target_ip"]
-    mode      = params["mode"]
+# ── Interactive Terminal CLI Fallback ─────────────────────────────────────────
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  NetOps MCP Assistant — Interactive CLI Mode")
+    print("=" * 60)
 
-    step("🔍", "Intent identified", f"diagnostics  →  {mode} to {target_ip}", "cyan")
-    step("📡", "Invoking MCP tool", f"run_diagnostics({target_ip}, {mode})", "blue", 0.3)
-
-    client = get_mcp_client()
-    res_text = client.call_tool("run_diagnostics", {
-        "target_ip": target_ip,
-        "mode": mode
-    })
-
-    is_pass = "PASS" in res_text or "Status=PASS" in res_text
-    icon = "✅" if is_pass else "❌"
-    color = "green" if is_pass else "red"
-
-    step(icon, f"Diagnostic Result (via MCP)", res_text, color, 0.2)
-    result_box(f"Diagnostics — {target_ip} ({mode})", [
-        ("Target", target_ip),
-        ("Mode", mode),
-        ("Result", res_text),
-    ], success=is_pass)
-
-
-def handle_list_rules():
-    step("🔍", "Intent identified", "list_firewall_rules", "cyan")
-    step("📡", "Invoking MCP tool", "list_firewall_rules()", "blue", 0.3)
-
-    client = get_mcp_client()
-    res_text = client.call_tool("list_firewall_rules", {})
-
-    step("✅", "Rules retrieved via MCP Server", "", "green", 0.2)
-    console.print(Panel(
-        f"[bold cyan]{res_text}[/bold cyan]",
-        title="[bold green]Active Firewall Rules (via MCP Server)[/bold green]",
-        border_style="green", box=box.ROUNDED, padding=(0, 1)
-    ))
-    console.print()
-
-
-def handle_help():
-    console.print(Panel(
-        """[bold cyan]Firewall[/bold cyan]
-  block port 8080
-  allow port 443
-  drop udp port 9090
-  reject port 3306 from 192.168.1.100
-
-[bold cyan]Bandwidth[/bold cyan]
-  limit bandwidth to 10 Mbps on eth0
-  throttle eth0 to 50 mbps
-  set rate to 5 Mbps on ens3
-
-[bold cyan]Diagnostics[/bold cyan]
-  ping 127.0.0.1
-  check connectivity to 8.8.8.8
-  run iperf3 test to 192.168.1.10
-
-[bold cyan]Rules[/bold cyan]
-  list firewall rules
-  show rules
-
-[bold cyan]Other[/bold cyan]
-  help    — show this message
-  exit    — quit the assistant""",
-        title="[bold white]Available Commands[/bold white]",
-        border_style="blue", box=box.ROUNDED, padding=(0, 2)
-    ))
-    console.print()
-
-
-# ── Banner ────────────────────────────────────────────────────────────────────
-def print_banner():
-    console.print()
-    console.print(Panel(
-        "[bold white]🛡️  NetOps MCP Assistant[/bold white]\n"
-        "[dim]Intelligent Network Operations via Natural Language[/dim]\n\n"
-        "[dim]Tools:[/dim] [cyan]configure_firewall[/cyan]  [cyan]set_bandwidth_limit[/cyan]  "
-        "[cyan]run_diagnostics[/cyan]  [cyan]list_firewall_rules[/cyan]\n"
-        "[dim]Type [/dim][bold white]help[/bold white][dim] for command examples · [/dim]"
-        "[bold white]exit[/bold white][dim] to quit[/dim]",
-        border_style="bright_blue",
-        box=box.DOUBLE_EDGE,
-        padding=(1, 4),
-    ))
-    console.print()
-
-
-# ── Main REPL ─────────────────────────────────────────────────────────────────
-def main():
-    print_banner()
+    bridge = NetOpsBridge()
+    status = bridge.get_status()
+    print(f"LLM: {status['llm']['message']}")
+    print(f"MCP: {'Connected' if status['mcp']['connected'] else 'Disconnected'} ({status['mcp']['tools_count']} tools)")
+    print("Type 'exit' or 'quit' to end.\n")
 
     while True:
         try:
-            # Prompt
-            console.print("[bold bright_blue]netops[/bold bright_blue][dim]>[/dim] ", end="")
-            message = input().strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Bye![/dim]")
+            query = input("netops> ").strip()
+            if not query:
+                continue
+            if query.lower() in ("exit", "quit"):
+                break
+
+            res = bridge.send_message(query)
+            print("\n--- Execution Timeline ---")
+            for item in res.get("timeline", []):
+                print(f"[{item['status']}] {item['title']}: {item['detail']}")
+
+            if res.get("verification"):
+                print(f"\nIndependent Verification: {res['verification'].get('summary') or res['verification']}")
+
+            if res.get("type") == "conversation":
+                print(f"\nAI: {res['content']}")
+            elif res.get("type") == "policy_rejection":
+                print(f"\nPOLICY REJECTION: {res.get('error')}")
+            print()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
             break
-
-        if not message:
-            continue
-
-        low = message.lower()
-        if low in ("exit", "quit", "q"):
-            console.print("\n[dim]Bye![/dim]")
-            break
-        if low in ("help", "h", "?"):
-            handle_help()
-            continue
-
-        # Separator
-        console.print(Rule(style="dim"))
-
-        # Parse
-        step("🧠", "Parsing command", f'"{message}"', "white", 0.2)
-        parsed = parse_command(message)
-
-        if parsed["intent"] == "unknown":
-            step("❓", "Command not recognized", "", "red", 0.2)
-            warn("Could not understand that command. Type [bold]help[/bold] for examples.")
-            continue
-
-        # Dispatch
-        if parsed["intent"] == "firewall":
-            handle_firewall(parsed["params"])
-        elif parsed["intent"] == "bandwidth":
-            handle_bandwidth(parsed["params"])
-        elif parsed["intent"] == "diagnostics":
-            handle_diagnostics(parsed["params"])
-        elif parsed["intent"] == "list_rules":
-            handle_list_rules()
-
-
-if __name__ == "__main__":
-    main()

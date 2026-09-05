@@ -6,6 +6,9 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./rules:/app/rules
     command: ["python", "server.py"]

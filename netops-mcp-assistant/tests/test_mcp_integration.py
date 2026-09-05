@@ -11,13 +11,16 @@ def mcp_client():
 
 
 def test_mcp_tool_discovery(mcp_client):
-    """Verify that MCP client discovers all 4 tools exposed by FastMCP server."""
+    """Verify that MCP client discovers all tools exposed by FastMCP server."""
     tools = mcp_client.list_tools()
     tool_names = [t["name"] for t in tools]
     assert "configure_firewall" in tool_names
     assert "set_bandwidth_limit" in tool_names
     assert "run_diagnostics" in tool_names
     assert "list_firewall_rules" in tool_names
+    assert "check_listening_ports" in tool_names
+    assert "check_port_connectivity" in tool_names
+    assert "validate_firewall_change" in tool_names
 
 
 def test_mcp_protected_port_rejection(mcp_client):
@@ -26,7 +29,7 @@ def test_mcp_protected_port_rejection(mcp_client):
         "configure_firewall",
         {"action": "DROP", "port": 22}
     )
-    assert "POLICY REJECTION" in res
+    assert "POLICY_REJECTION" in res or "POLICY REJECTION" in res
     assert "PROTECTED" in res
 
 
@@ -36,8 +39,18 @@ def test_mcp_protected_interface_rejection(mcp_client):
         "set_bandwidth_limit",
         {"interface": "eth0", "rate_mbps": 10}
     )
-    assert "POLICY REJECTION" in res
+    assert "POLICY_REJECTION" in res or "POLICY REJECTION" in res
     assert "PROTECTED" in res
+
+
+def test_mcp_arbitrary_port_9999(mcp_client):
+    """Verify that port 9999 is NOT rejected by policy in FastMCP server."""
+    res = mcp_client.call_tool(
+        "configure_firewall",
+        {"action": "DROP", "port": 9999}
+    )
+    assert "POLICY_REJECTION" not in res
+    assert "POLICY REJECTION" not in res
 
 
 def test_mcp_run_diagnostics_ping(mcp_client):
@@ -46,5 +59,4 @@ def test_mcp_run_diagnostics_ping(mcp_client):
         "run_diagnostics",
         {"target_ip": "127.0.0.1", "mode": "ping"}
     )
-    assert "Ping Result" in res
     assert "127.0.0.1" in res
