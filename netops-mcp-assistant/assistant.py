@@ -130,10 +130,10 @@ class NetOpsBridge:
         if intent_type == "message":
             reply_text = llm_result.get("message") or ai_response or "Understood."
             self.conversation_history.append({"role": "assistant", "content": reply_text})
-            provider_label = self.llm.provider.upper() if self.llm.is_configured else "Rule Engine"
+            status_label = "LLM (AI-Powered)" if self.llm.is_configured else "LLM Not Configured"
             timeline.append({
                 "step": "LLM_INTERPRETATION",
-                "title": f"Intent Interpreter ({provider_label})",
+                "title": f"Intent Interpreter ({status_label})",
                 "detail": f"Resolved conversational query ({llm_elapsed}ms)",
                 "status": "COMPLETED",
                 "timestamp": time.time()
@@ -146,29 +146,33 @@ class NetOpsBridge:
             }
 
         if intent_type == "error":
+            is_unavailable = llm_result.get("is_llm_unavailable", False)
+            is_error = llm_result.get("is_llm_error", False)
+            
+            error_detail = llm_result.get("message", "Unknown error")
+            error_step = "LLM_UNAVAILABLE" if is_unavailable else "LLM_ERROR"
+            error_title = "LLM Not Configured" if is_unavailable else "LLM Provider Error"
+            
             timeline.append({
-                "step": "LLM_ERROR",
-                "title": "LLM Interpretation Error",
-                "detail": llm_result.get("message", "Unknown LLM error"),
+                "step": error_step,
+                "title": error_title,
+                "detail": error_detail,
                 "status": "FAILED",
                 "timestamp": time.time()
             })
-            # Check fallback
-            if "fallback" in llm_result:
-                llm_result = llm_result["fallback"]
-                intent_type = llm_result.get("type", "message")
-            else:
-                return {
-                    "type": "error",
-                    "error": llm_result.get("message"),
-                    "timeline": timeline
-                }
+            
+            # DO NOT silently fall back. Return the error to the user.
+            return {
+                "type": "error",
+                "error": error_detail,
+                "timeline": timeline
+            }
 
         # Handle tool call intent
         tool_name = llm_result.get("tool")
         tool_args = llm_result.get("arguments", {})
-        provider_name = self.llm.provider.upper() if self.llm.is_configured else "OFFLINE ENGINE"
-
+        provider_name = "LLM (AI-Powered)" if self.llm.is_configured else "UNKNOWN"
+        
         timeline.append({
             "step": "LLM_INTENT",
             "title": f"Intent Resolved by {provider_name}",

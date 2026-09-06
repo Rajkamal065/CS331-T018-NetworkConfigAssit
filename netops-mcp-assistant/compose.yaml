@@ -1,15 +1,39 @@
 services:
-  mcp-server:
-    build: .
-    container_name: netops_mcp_server
-    network_mode: host
+  netops-assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: netops-assistant
+    ports:
+      - '5000:5000'    # Web UI
+      - '8000:8000'    # FastMCP server
+      - '11434:11434'  # Ollama API
+    environment:
+      - LLM_PROVIDER=ollama
+      - LLM_MODEL=llama3.1
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - DEBUG=false
+    volumes:
+      - ./rules:/app/rules
+      - ./logs:/app/logs
+      - ollama-data:/root/.ollama
     cap_add:
       - NET_ADMIN
       - NET_RAW
+      - SYS_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
     env_file:
       - path: .env
         required: false
-    volumes:
-      - ./rules:/app/rules
-    command: ["python", "server.py"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ollama-data:
+    driver: local

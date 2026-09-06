@@ -98,3 +98,86 @@ def test_fallback_parser_listening_ports():
     assert res["type"] == "tool_call"
     assert res["tool"] == "check_listening_ports"
 
+
+# ────────────────────────────────────────────────────────────────────────────────
+# NEW TESTS: LLM Architecture Fixes
+# ────────────────────────────────────────────────────────────────────────────────
+
+
+def test_llm_unavailable_returns_error_not_fallback():
+    """
+    Verify that when LLM is not configured, interpret() returns an error
+    instead of silently falling back to regex parsing.
+    
+    This is the KEY FIX: The system should NOT present regex results as AI interpretation.
+    """
+    import os
+    # Ensure LLM is not configured
+    for key in ["LLM_PROVIDER", "GROQ_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_BASE_URL"]:
+        os.environ.pop(key, None)
+    
+    client = LLMClient()
+    assert not client.is_configured, "LLM should not be configured for this test"
+    
+    # Call interpret() with LLM not configured
+    result = client.interpret("block port 9999")
+    
+    # Should return an error, NOT a tool_call
+    assert result["type"] == "error", f"Expected error type, got {result['type']}"
+    assert result.get("is_llm_unavailable") is True, "Should flag as LLM unavailable"
+    assert "not configured" in result.get("message", "").lower(), \
+        f"Error message should mention LLM not configured, got: {result.get('message')}"
+
+
+def test_offline_deterministic_parse_available_for_testing():
+    """
+    Verify that offline_deterministic_parse() is available as an explicit
+    offline/test mode for development.
+    
+    This method should NOT be used as a silent fallback (interpret() does not call it).
+    It's only for explicit offline testing.
+    """
+    client = LLMClient()
+    res = client.offline_deterministic_parse("Block port 9999 TCP")
+    
+    assert res["type"] == "tool_call"
+    assert res["tool"] == "configure_firewall"
+    assert res["arguments"]["port"] == 9999
+    assert res.get("is_fallback") is True, "Should be marked as fallback/deterministic"
+
+
+def test_status_info_shows_llm_not_configured():
+    """
+    Verify that status_info clearly indicates when LLM is not configured.
+    Should NOT say 'Offline Rule Engine' or 'Deterministic Regex'.
+    """
+    import os
+    # Ensure LLM is not configured
+    for key in ["LLM_PROVIDER", "GROQ_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_BASE_URL"]:
+        os.environ.pop(key, None)
+    
+    client = LLMClient()
+    status = client.status_info
+    
+    assert status["connected"] is False
+    assert "not configured" in status.get("provider", "").lower() or \
+           "not configured" in status.get("message", "").lower(), \
+        f"Status should indicate LLM not configured, got: {status}"
+    assert "rule engine" not in status.get("provider", "").lower(), \
+        "Status should NOT say 'Rule Engine' (that was the old architecture)"
+    assert "regex" not in status.get("provider", "").lower(), \
+        "Status should NOT mention regex (only mention it in documentation)"
+
+
+def test_fallback_parse_backward_compatibility():
+    """
+    Verify that _fallback_parse() still works for backward compatibility
+    but now it's deprecated and calls offline_deterministic_parse().
+    """
+    client = LLMClient()
+    res = client._fallback_parse("Block port 8080")
+    
+    # Should still work as before
+    assert res["type"] == "tool_call"
+    assert res["tool"] == "configure_firewall"
+    assert res["arguments"]["port"] == 8080

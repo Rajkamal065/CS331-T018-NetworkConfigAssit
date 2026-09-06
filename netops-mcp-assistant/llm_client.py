@@ -271,20 +271,23 @@ class LLMClient:
         if not self._configured:
             return {
                 "connected": False,
-                "provider": "Offline Rule Engine",
-                "model": "Deterministic Regex & Policy Parser",
-                "message": "Offline Rule Engine Active (Deterministic FastMCP Dispatch)."
+                "provider": "LLM Not Configured",
+                "model": "N/A",
+                "message": "LLM provider not configured. Set LLM_PROVIDER and API key to enable AI-powered intent interpretation."
             }
         return {
             "connected": True,
             "provider": self.provider,
             "model": self.model,
-            "message": f"Connected to {self.provider} ({self.model})"
+            "message": f"Connected to {self.provider} ({self.model}) - AI-powered intent interpretation active"
         }
 
     def interpret(self, user_message: str, conversation_history: list = None) -> dict:
         """
-        Send user message to LLM and get structured tool call or conversational response.
+        Send user message to LLM for intent interpretation.
+        
+        The LLM is the PRIMARY and ONLY intent interpreter when configured.
+        When LLM is not configured or fails, return a clear error (NOT a silent fallback).
 
         Returns:
             {
@@ -296,23 +299,31 @@ class LLMClient:
             }
         """
         if not self._configured:
-            return self._fallback_parse(user_message)
+            return {
+                "type": "error",
+                "message": "LLM provider not configured. Please set LLM_PROVIDER and the corresponding API key (GROQ_API_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_BASE_URL).",
+                "ai_response": None,
+                "is_llm_unavailable": True
+            }
 
         try:
             if self.provider == "claude":
                 return self._call_claude(user_message, conversation_history)
+            elif self.provider == "ollama":
+                return self._call_ollama(user_message, conversation_history)
             else:
                 return self._call_openai_compatible(user_message, conversation_history)
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return {
                 "type": "error",
-                "message": f"LLM error: {str(e)}. Falling back to deterministic rule engine.",
-                "fallback": self._fallback_parse(user_message)
+                "message": f"LLM provider error: {str(e)}. Please check your API configuration and try again.",
+                "ai_response": None,
+                "is_llm_error": True
             }
 
     def _call_openai_compatible(self, user_message: str, history: list = None) -> dict:
-        """Call Groq/OpenRouter/Ollama using OpenAI-compatible API."""
+        """Call Groq or OpenRouter using their OpenAI-compatible APIs."""
         import httpx
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -321,14 +332,10 @@ class LLMClient:
         messages.append({"role": "user", "content": user_message})
 
         headers = {"Content-Type": "application/json"}
-        if self.provider != "ollama":
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers["Authorization"] = f"Bearer {self.api_key}"
 
         # Build the URL
-        if self.provider == "ollama":
-            url = f"{self.base_url}/v1/chat/completions"
-        else:
-            url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
 
         payload = {
             "model": self.model,
@@ -364,6 +371,55 @@ class LLMClient:
             }
 
         # Conversational response
+        return {
+            "type": "message",
+            "message": msg.get("content", ""),
+            "ai_response": msg.get("content", ""),
+        }
+
+    def _call_ollama(self, user_message: str, history: list = None) -> dict:
+        """Call Ollama's native chat API with structured tool definitions."""
+        import httpx
+
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": user_message})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "tools": MCP_TOOLS_SCHEMA,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 1024},
+        }
+
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{self.base_url}/api/chat",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        msg = data.get("message", {})
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls:
+            fn = tool_calls[0].get("function", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            return {
+                "type": "tool_call",
+                "tool": fn.get("name", ""),
+                "arguments": args,
+                "ai_response": msg.get("content") or f"Executing network tool: {fn.get('name', '')}",
+            }
+
         return {
             "type": "message",
             "message": msg.get("content", ""),
@@ -435,10 +491,16 @@ class LLMClient:
             "ai_response": text_content,
         }
 
-    def _fallback_parse(self, message: str) -> dict:
+    def offline_deterministic_parse(self, message: str) -> dict:
         """
-        Deterministic intent parser for local network operations.
-        Provides robust natural language interpretation, typo resilience, and conversational flexibility.
+        OFFLINE TEST MODE ONLY: Deterministic intent parser using regex patterns.
+        
+        This is NOT the primary intent interpreter. It exists solely as an explicit
+        offline/testing fallback when the LLM provider is not configured.
+        
+        DO NOT use this for production. The LLM is the authoritative intent interpreter.
+        
+        Provides robust pattern matching for common network operations.
         """
         msg = message.lower().strip()
 
@@ -660,6 +722,10 @@ class LLMClient:
             "ai_response": default_reply,
             "is_fallback": True
         }
+
+    def _fallback_parse(self, message: str) -> dict:
+        """Deprecated: use offline_deterministic_parse() instead."""
+        return self.offline_deterministic_parse(message)
 
 
 # ── Module-level singleton ───────────────────────────────────────────────────

@@ -95,11 +95,103 @@ NetOps MCP Assistant delivers a professional desktop experience for network admi
 
 ---
 
+## 🎯 LLM, MCP, and Verification: Three Separated Concerns
+
+NetOps implements **strict separation of concerns** between three independent layers:
+
+### 1. **LLM = Intent Interpretation (Human Understanding)**
+- The LLM is **responsible for understanding natural language**.
+- It converts user intent (e.g., `"block ppt 9999"`, `"drop incoming TCP on port 9999"`, `"prevent traffic on 9999"`) into **structured tool calls**.
+- The LLM receives schema definitions for all MCP tools and must choose the appropriate tool and arguments.
+- **The LLM is NOT a security authority**. It cannot and does not enforce policies.
+
+#### Example: Natural Language Variations
+All of these user inputs should resolve to the same structured intent:
+```
+User: "block port 9999"
+User: "drop 9999"
+User: "block ppt 9999" (typo)
+User: "prevent TCP traffic on 9999"
+User: "close port 9999"
+User: "stop incoming connections on 9999"
+
+↓ All understood by LLM as ↓
+
+Tool Call: configure_firewall(action="DROP", port=9999, protocol="tcp", source_ip="")
+```
+
+**Without an LLM configured**, the assistant cannot interpret natural language and will return an error. There is **no silent regex fallback**.
+
+### 2. **MCP = Authoritative Policy & Execution (Security Authority)**
+- The MCP server is the **only entity that can execute network operations**.
+- It reads `rules/policies.yaml` and enforces all security policies **server-side**.
+- Even if the LLM perfectly understands a user request, the MCP server may reject it if policy forbids it.
+- Example: `configure_firewall(action="DROP", port=22, ...)` will be rejected with `POLICY_REJECTION` regardless of how clearly the user requested it.
+
+### 3. **Verification = Independent Proof (Trust But Verify)**
+- After the MCP server executes an operation, the verifier independently probes the system.
+- It does **not trust** the exit code or MCP output.
+- It actively tests socket reachability and inspects kernel rules.
+- This ensures that requested changes actually took effect.
+
+#### Example: Complete Pipeline
+```
+User: "block port 9999"
+  ↓
+LLM interprets → { tool: "configure_firewall", arguments: { action: "DROP", port: 9999, protocol: "tcp" } }
+  ↓
+MCP server checks policy → "Port 9999 is arbitrary (allowed)"
+  ↓
+MCP executes → iptables -I INPUT -p tcp --dport 9999 -j DROP
+  ↓
+Verifier probes → Attempts TCP connection to port 9999 → Timeout/refused
+  ↓
+User sees ✓ Verified: Port 9999 is now blocked
+```
+
+#### Example: Policy Rejection
+```
+User: "block SSH"
+  ↓
+LLM interprets → { tool: "configure_firewall", arguments: { action: "DROP", port: 22, protocol: "tcp" } }
+  ↓
+MCP server checks policy → "Port 22 is protected. REJECTED."
+  ↓
+User sees ✗ POLICY_REJECTION: Port 22 (SSH) is protected by policy
+```
+
+---
+
 ## 🚀 Setup & Installation
 
-### Prerequisites
+### ⚡ Quickest Start: Docker (All-in-One)
+
+Everything bundled and ready. No separate Ollama setup needed!
+
+```bash
+# Build the image
+docker build -t netops-assistant:latest .
+
+# Run with Docker Compose (recommended)
+docker-compose up
+```
+
+**That's it!** Access at http://localhost:5000
+
+Features:
+- ✅ Ollama (llama3.1) bundled and pre-configured
+- ✅ All network tools (iptables, tc, ping, iperf3) included
+- ✅ Zero external API dependencies
+- ✅ Works on Windows, Mac, Linux
+- ✅ Persistent model cache
+
+Or use the convenience scripts:
+- **Linux/Mac**: `bash run-docker.sh` → builds, runs, and cleans up
+- **Windows**: `run-docker.bat` → same but for Windows CMD
+
+### Prerequisites (Non-Docker)
 - Python 3.11 or 3.12
-- Linux environment or Docker (for real `iptables` / `tc` execution; Windows supported for GUI/CLI/mock development)
+- Linux environment (for real `iptables` / `tc` execution; Windows supported for GUI/CLI development)
 
 ### 1. Install Dependencies
 ```bash
@@ -111,42 +203,73 @@ pip install -r requirements.txt
 
 ## 🔑 Configuring the LLM
 
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
+### Quick Start (Recommended): Ollama (Free & Local)
 
-Edit `.env` to configure your preferred LLM:
+Ollama is **completely free**, runs locally on your machine, and requires no API keys.
 
-### Option A: Anthropic Claude (Recommended)
-```ini
-LLM_PROVIDER=claude
-LLM_MODEL=claude-3-5-sonnet-20241022
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-```
+1. **Download Ollama** from [ollama.ai](https://ollama.ai)
 
-### Option B: Groq (Ultra-Fast Free Tier)
+2. **Pull the Llama 3.1 model**:
+   ```bash
+   ollama pull llama3.1
+   ```
+
+3. **Copy `.env.example` to `.env`**:
+   ```bash
+   cp .env.example .env
+   ```
+
+   The default configuration is already set to Ollama:
+   ```ini
+   LLM_PROVIDER=ollama
+   LLM_MODEL=llama3.1
+   OLLAMA_BASE_URL=http://localhost:11434
+   ```
+
+4. **Start Ollama** (in a separate terminal):
+   ```bash
+   ollama serve
+   ```
+
+5. **Run the assistant**:
+   ```bash
+   python app.py  # Desktop
+   # or
+   python assistant.py  # CLI
+   ```
+
+---
+
+### Alternative Options
+
+If you prefer a different provider, edit `.env` and uncomment one of these:
+
+#### Option A: Groq (Ultra-Fast Free Tier)
 ```ini
 LLM_PROVIDER=groq
 LLM_MODEL=llama-3.1-8b-instant
-GROQ_API_KEY=your_groq_api_key_here
+GROQ_API_KEY=your_free_key_from_console.groq.com
 ```
 
-### Option C: OpenRouter (Free Tier Available)
+#### Option B: Anthropic Claude (Highest Quality, Paid)
+```ini
+LLM_PROVIDER=claude
+LLM_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_API_KEY=your_api_key_from_console.anthropic.com
+```
+
+#### Option C: OpenRouter (Free Tier Available)
 ```ini
 LLM_PROVIDER=openrouter
 LLM_MODEL=meta-llama/llama-3.1-8b-instruct:free
-OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_API_KEY=your_free_key_from_openrouter.ai
 ```
 
-### Option D: Ollama (100% Local & Offline)
-```ini
-LLM_PROVIDER=ollama
-LLM_MODEL=llama3.1
-OLLAMA_BASE_URL=http://localhost:11434
-```
+---
 
-> **Note**: If no API key is provided, the assistant transparently falls back to its deterministic pattern-matching engine and clearly indicates this in the UI.
+> **IMPORTANT**: Configuring an LLM provider is required for AI-powered intent interpretation. If no LLM is configured, the assistant will report "LLM provider not configured" and requests will not be processed.
+>
+> For development and testing ONLY, there is an offline deterministic pattern parser available explicitly as a test mode (not as a fallback).
 
 ---
 
