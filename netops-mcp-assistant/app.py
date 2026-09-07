@@ -120,10 +120,10 @@ def find_available_port(start_port=8000, max_attempts=50) -> int:
     return start_port
 
 
-def start_http_server(bridge: NetOpsBridge, port: int) -> ThreadingHTTPServer:
+def start_http_server(bridge: NetOpsBridge, port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
     """Start embedded HTTP server in a background daemon thread."""
     NetOpsHTTPHandler.bridge = bridge
-    server = ThreadingHTTPServer(("127.0.0.1", port), NetOpsHTTPHandler)
+    server = ThreadingHTTPServer((host, port), NetOpsHTTPHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -132,7 +132,9 @@ def start_http_server(bridge: NetOpsBridge, port: int) -> ThreadingHTTPServer:
 def parse_args():
     parser = argparse.ArgumentParser(description="NetOps MCP AI Desktop Assistant")
     parser.add_argument("--web", "-w", action="store_true", help="Launch in default Web Browser instead of pywebview window")
-    parser.add_argument("--port", "-p", type=int, default=8000, help="Local HTTP server port (default: 8000)")
+    parser.add_argument("--host", type=str, default=os.getenv("NETOPS_HOST", "127.0.0.1"), help="HTTP host to bind (default: 127.0.0.1, use 0.0.0.0 for Docker)")
+    parser.add_argument("--port", "-p", type=int, default=int(os.getenv("NETOPS_PORT", 8000)), help="Local HTTP server port (default: 8000)")
+    parser.add_argument("--connect", type=str, default=None, help="Connect desktop window to existing backend URL (e.g. http://localhost:5000 from Docker)")
     parser.add_argument("--no-browser", action="store_true", help="Start server without auto-launching browser")
     parser.add_argument("--debug", action="store_true", help="Enable pywebview debug inspector")
     return parser.parse_args()
@@ -140,6 +142,28 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Remote Docker backend connection mode:
+    # Just launch the native desktop GUI window pointed at the Docker container!
+    if args.connect:
+        app_url = args.connect.rstrip("/")
+        logger.info(f"Connecting native desktop window to Docker backend: {app_url}")
+        try:
+            import webview
+            window = webview.create_window(
+                title="NetOps MCP Assistant — AI Network Operations (Docker Backend)",
+                url=app_url,
+                width=1260,
+                height=860,
+                min_size=(960, 640),
+                background_color="#080c14"
+            )
+            webview.start(debug=args.debug)
+        except ImportError:
+            logger.warning("pywebview not installed. Opening in default browser...")
+            webbrowser.open(app_url)
+        return
+
     logger.info("Initializing NetOps MCP Assistant Subsystems...")
 
     # Instantiate the Python bridge (connects LLM + FastMCP server via stdio)
@@ -151,9 +175,10 @@ def main():
         sys.exit(1)
 
     port = find_available_port(args.port)
-    server = start_http_server(bridge, port)
-    app_url = f"http://127.0.0.1:{port}"
-    logger.info(f"NetOps Web Server active at: {app_url}")
+    server = start_http_server(bridge, port, host=args.host)
+    display_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
+    app_url = f"http://{display_host}:{port}"
+    logger.info(f"NetOps Web Server active at: {app_url} (bound to {args.host}:{port})")
 
     if args.web:
         logger.info(f"Opening in default web browser: {app_url}")

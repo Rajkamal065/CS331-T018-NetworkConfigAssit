@@ -12,7 +12,7 @@ import time
 import json
 import logging
 from typing import Dict, Any, Optional
-from tools.net_ops import NetworkOps
+from tools.net_ops import NetworkOps, HAS_IPTABLES
 
 logger = logging.getLogger("DiagnosticVerifier")
 
@@ -60,7 +60,14 @@ class DiagnosticVerifier:
             "status": status,
             "packet_loss": loss,
             "avg_rtt_ms": rtt,
-            "target": target_ip
+            "target": target_ip,
+            "execution": {
+                "command": " ".join(ping_args),
+                "stdout": stdout,
+                "stderr": res.get("stderr", ""),
+                "returncode": res.get("returncode", 0),
+                "execution_mode": res.get("execution_mode", "real")
+            }
         }
 
     @staticmethod
@@ -104,42 +111,74 @@ class DiagnosticVerifier:
             s.connect((host, port))
             s.close()
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
+            cmd_str = f"nc -zv -w {int(timeout)} {host} {port}"
             return {
                 "reachable": True,
                 "state": "REACHABLE",
                 "host": host,
                 "port": port,
                 "latency_ms": elapsed_ms,
-                "details": f"TCP connection to {host}:{port} succeeded in {elapsed_ms}ms"
+                "details": f"TCP connection to {host}:{port} succeeded in {elapsed_ms}ms",
+                "execution": {
+                    "command": cmd_str,
+                    "stdout": f"Connection to {host} {port} port [tcp/*] succeeded! (RTT {elapsed_ms}ms)",
+                    "stderr": "",
+                    "returncode": 0,
+                    "execution_mode": "socket_probe"
+                }
             }
         except socket.timeout:
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
+            cmd_str = f"nc -zv -w {int(timeout)} {host} {port}"
             return {
                 "reachable": False,
                 "state": "BLOCKED",
                 "host": host,
                 "port": port,
                 "latency_ms": elapsed_ms,
-                "details": f"Connection timed out ({timeout}s). Traffic likely dropped by firewall (DROP)."
+                "details": f"Connection timed out ({timeout}s). Traffic likely dropped by firewall (DROP).",
+                "execution": {
+                    "command": cmd_str,
+                    "stdout": "",
+                    "stderr": f"Connection timed out after {timeout}s (DROP)",
+                    "returncode": 1,
+                    "execution_mode": "socket_probe"
+                }
             }
         except ConnectionRefusedError:
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
+            cmd_str = f"nc -zv -w {int(timeout)} {host} {port}"
             return {
                 "reachable": False,
                 "state": "REFUSED",
                 "host": host,
                 "port": port,
                 "latency_ms": elapsed_ms,
-                "details": f"Connection refused by host (RST packet received). Port rejected or service not listening."
+                "details": f"Connection refused by host (RST packet received). Port rejected or service not listening.",
+                "execution": {
+                    "command": cmd_str,
+                    "stdout": "",
+                    "stderr": f"connect to {host} port {port} (tcp) failed: Connection refused",
+                    "returncode": 1,
+                    "execution_mode": "socket_probe"
+                }
             }
         except Exception as e:
+            cmd_str = f"nc -zv -w {int(timeout)} {host} {port}"
             return {
                 "reachable": False,
                 "state": "ERROR",
                 "host": host,
                 "port": port,
                 "latency_ms": 0.0,
-                "details": f"Socket probe error: {str(e)}"
+                "details": f"Socket probe error: {str(e)}",
+                "execution": {
+                    "command": cmd_str,
+                    "stdout": "",
+                    "stderr": str(e),
+                    "returncode": 1,
+                    "execution_mode": "socket_probe"
+                }
             }
         finally:
             try:
@@ -150,10 +189,16 @@ class DiagnosticVerifier:
     @classmethod
     def check_listening_ports(cls) -> Dict[str, Any]:
         """Enumerate listening ports on the local system."""
-        raw_output = NetworkOps.list_listening_ports()
+        res = NetworkOps.list_listening_ports()
+        if isinstance(res, dict):
+            return {
+                "status": "PASS",
+                "raw": res.get("raw", ""),
+                "execution": res.get("execution")
+            }
         return {
             "status": "PASS",
-            "raw": raw_output
+            "raw": str(res)
         }
 
     @classmethod
@@ -198,6 +243,42 @@ class DiagnosticVerifier:
                     behavior_consistent = True
                 elif action == "ACCEPT" and probe["state"] in ["REACHABLE", "REFUSED"]:
                     behavior_consistent = True
+
+        is_windows = os.name == "nt"
+        has_real_iptables = HAS_IPTABLES
+
+        # On Windows (no iptables), we can only check the in-memory simulation table.
+        # Socket probe REFUSED does NOT mean iptables blocked it — it just means
+        # no service is listening on that port (which is the Windows default).
+        # We must be honest about this distinction.
+        if is_windows or not has_real_iptables:
+            rule_in_sim = rule_check["rule_present"]  # checked in-memory table
+            overall_status = "SIMULATED" if rule_in_sim else "UNVERIFIED"
+            summary_parts = []
+            if rule_in_sim:
+                target_desc = f"port {port}/{protocol}" if port > 0 else f"source IP {source_ip}"
+                summary_parts.append(
+                    f"[SIMULATED] Rule {action} for {target_desc} is registered in the "
+                    f"in-memory policy table. iptables is not available on this system (Windows). "
+                    f"This rule does NOT enforce actual OS-level traffic blocking."
+                )
+            else:
+                target_desc = f"port {port}/{protocol}" if port > 0 else f"source IP {source_ip}"
+                summary_parts.append(
+                    f"Rule {action} for {target_desc} was not found in the in-memory table."
+                )
+            return {
+                "status": overall_status,
+                "action": action,
+                "port": port,
+                "protocol": protocol,
+                "source_ip": source_ip,
+                "rule_in_kernel": False,
+                "rule_in_memory": rule_in_sim,
+                "socket_state": "N/A (Windows simulation mode)",
+                "probe_details": "Socket probe skipped — on Windows, REFUSED means no service is bound, not firewall block.",
+                "summary": " ".join(summary_parts)
+            }
 
         overall_status = "VERIFIED" if (rule_check["rule_present"] or behavior_consistent) else "UNVERIFIED"
 

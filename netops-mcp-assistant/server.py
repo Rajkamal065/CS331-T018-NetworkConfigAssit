@@ -263,7 +263,8 @@ def run_diagnostics(target_ip: str, mode: str = "ping") -> str:
             "status": res["status"],
             "target": target_ip,
             "packet_loss_percent": res["packet_loss"],
-            "avg_rtt_ms": res["avg_rtt_ms"]
+            "avg_rtt_ms": res["avg_rtt_ms"],
+            "execution": res.get("execution")
         })
     elif mode_lower == "iperf3":
         res = DiagnosticVerifier.run_bandwidth_test(
@@ -273,7 +274,8 @@ def run_diagnostics(target_ip: str, mode: str = "ping") -> str:
         return json.dumps({
             "status": res["status"],
             "target": target_ip,
-            "throughput_mbps": res.get("throughput_mbps", 0.0)
+            "throughput_mbps": res.get("throughput_mbps", 0.0),
+            "execution": res.get("execution")
         })
 
 
@@ -283,10 +285,16 @@ def list_firewall_rules() -> str:
     """
     Show all currently active iptables firewall rules.
     """
-    rules = NetworkOps.list_iptables_rules()
+    res = NetworkOps.list_iptables_rules()
+    if isinstance(res, dict):
+        return json.dumps({
+            "status": "SUCCESS",
+            "rules": res.get("rules", "No active firewall rules found."),
+            "execution": res.get("execution")
+        })
     return json.dumps({
         "status": "SUCCESS",
-        "rules": rules if rules else "No active firewall rules found."
+        "rules": res if res else "No active firewall rules found."
     })
 
 

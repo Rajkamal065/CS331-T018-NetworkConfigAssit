@@ -455,14 +455,42 @@ class LLMClient:
             elif tool_name == "check_listening_ports":
                 args.pop("port", None)
 
+            # Build a natural intent-confirmation message for the UI.
+            # Strip any leaked [Tool: ...] or <tool_call> tags from the LLM's text.
+            llm_content = msg.get("content") or ""
+            if llm_content:
+                llm_content = re.sub(r'\[Tool:\s*[^\]]+\]\s*', '', llm_content).strip()
+                llm_content = re.sub(r'<\/?tool_call>\s*', '', llm_content).strip()
+
+            if not llm_content:
+                if tool_name == "configure_firewall":
+                    act = args.get("action", "apply rule on")
+                    port = args.get("port", "?")
+                    proto = args.get("protocol", "tcp").upper()
+                    verb = {"DROP": "block", "ACCEPT": "allow", "REJECT": "reject"}.get(act, act.lower())
+                    llm_content = f"Got it — I'll {verb} {proto} traffic on port {port}."
+                elif tool_name == "run_diagnostics":
+                    mode = args.get("mode", "ping")
+                    target = args.get("target_ip", "target")
+                    llm_content = f"Running {mode} diagnostics to {target}."
+                elif tool_name == "set_bandwidth_limit":
+                    llm_content = f"Applying bandwidth limit of {args.get('rate_mbps')} Mbps on {args.get('interface')}."
+                elif tool_name == "list_firewall_rules":
+                    llm_content = "Fetching active iptables firewall rules."
+                elif tool_name == "check_listening_ports":
+                    llm_content = "Checking which ports are currently listening."
+                elif tool_name == "check_port_connectivity":
+                    llm_content = f"Testing TCP connectivity to port {args.get('port')} on {args.get('host', '127.0.0.1')}."
+                elif tool_name == "verify_firewall_rule":
+                    llm_content = f"Checking firewall table for {args.get('action', 'rule')} on port {args.get('port')}."
+                else:
+                    llm_content = f"Running network operation: {tool_name}."
+
             return {
                 "type": "tool_call",
                 "tool": tool_name,
                 "arguments": args,
-                "ai_response": (
-                    msg.get("content")
-                    or f"Executing network tool: {tool_name}"
-                ),
+                "ai_response": llm_content,
             }
 
         # Conversational response

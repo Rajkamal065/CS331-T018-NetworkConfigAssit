@@ -16,7 +16,6 @@ logs/
 .vscode
 .idea
 *.tar.gz
-docker-entrypoint.sh
 build-docker.sh
 run-docker.sh
 build-docker.bat

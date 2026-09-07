@@ -1,12 +1,6 @@
-FROM ollama/ollama:latest AS ollama-base
-
 FROM python:3.11-slim
 
-# Copy Ollama from its image
-COPY --from=ollama-base /bin/ollama /bin/ollama
-COPY --from=ollama-base /usr/bin/ollama /usr/bin/ollama
-
-# Install system dependencies for networking tools and Ollama
+# Install system dependencies for Linux networking tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables \
     iproute2 \
@@ -18,22 +12,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy Python requirements
+# Install Python requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Copy application code
 COPY . .
 
-# Create Ollama model directory
-RUN mkdir -p /root/.ollama/models
+# Expose Web UI & API port
+EXPOSE 5000
 
-# Copy entrypoint script
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
-# Expose ports
-EXPOSE 11434 5000 8000
-
-# Use entrypoint to start both Ollama and the app
-ENTRYPOINT ["/docker-entrypoint.sh"]
+# Start the NetOps Web Assistant directly
+CMD ["python", "app.py", "--web", "--no-browser", "--host", "0.0.0.0", "--port", "5000"]

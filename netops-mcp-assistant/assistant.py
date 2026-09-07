@@ -121,8 +121,13 @@ class NetOpsBridge:
         llm_result = self.llm.interpret(message, self.conversation_history)
         llm_elapsed = round((time.time() - t0) * 1000, 1)
 
-        # Record in history
+        # Record user turn in history
         self.conversation_history.append({"role": "user", "content": message})
+
+        # Keep history bounded to last 10 turns (5 user + 5 assistant) to
+        # prevent context pollution that causes Groq to repeat old tool calls
+        if len(self.conversation_history) > 10:
+            self.conversation_history = self.conversation_history[-10:]
 
         intent_type = llm_result.get("type", "message")
         ai_response = llm_result.get("ai_response") or llm_result.get("message", "")
@@ -313,12 +318,42 @@ class NetOpsBridge:
                 final_ai_msg = f"Diagnostics complete: target {target} reachable with {loss}% packet loss and {rtt}ms avg latency."
             elif tool_name == "set_bandwidth_limit":
                 final_ai_msg = mcp_data.get("message") or f"Bandwidth limit applied."
+            elif tool_name == "check_bandwidth":
+                iface = mcp_data.get("interface", tool_args.get("interface", "eth1"))
+                rate = mcp_data.get("current_rate_mbps", 1000)
+                is_lim = mcp_data.get("is_limited", False)
+                final_ai_msg = f"Bandwidth status on {iface}: {'Capped at ' + str(rate) + ' Mbps' if is_lim else 'Unconstrained line capacity (1000 Mbps)'}."
             elif tool_name == "list_firewall_rules":
                 final_ai_msg = "Retrieved active firewall rules table below."
             elif tool_name == "check_listening_ports":
                 final_ai_msg = "Retrieved active listening sockets and services below."
-            else:
-                final_ai_msg = mcp_data.get("message") or f"Executed tool: {tool_name}"
+            elif tool_name == "check_port_connectivity":
+                state = mcp_data.get("state", "UNKNOWN")
+                host = mcp_data.get("host", tool_args.get("host", "127.0.0.1"))
+                port = mcp_data.get("port", tool_args.get("port", 0))
+                latency = mcp_data.get("latency_ms", 0)
+                if state == "REACHABLE":
+                    final_ai_msg = f"Port {port} on {host} is reachable. TCP connection succeeded in {latency}ms."
+                elif state == "REFUSED":
+                    final_ai_msg = f"Port {port} on {host} actively refused the connection — no service is listening or a REJECT rule is active."
+                elif state == "BLOCKED":
+                    final_ai_msg = f"Port {port} on {host} timed out — traffic is likely being silently DROPped by a firewall rule."
+                else:
+                    final_ai_msg = mcp_data.get("details") or f"Connectivity probe to {host}:{port} returned {state}."
+            elif tool_name == "verify_firewall_rule":
+                is_present = mcp_data.get("rule_present", False)
+                act = mcp_data.get("action", tool_args.get("action", "RULE"))
+                prt = mcp_data.get("port", tool_args.get("port", ""))
+                proto = mcp_data.get("protocol", tool_args.get("protocol", "tcp"))
+                if is_present:
+                    final_ai_msg = f"Confirmed: Firewall rule `{act} {prt}/{proto}` is active in the iptables table."
+                else:
+                    final_ai_msg = f"Firewall rule `{act} {prt}/{proto}` is NOT found in the active iptables table."
+
+        # Append a clean, natural assistant turn to history so the next LLM call
+        # understands past context naturally without echoing raw tool prefix brackets.
+        history_summary = final_ai_msg or f"Completed {tool_name}."
+        self.conversation_history.append({"role": "assistant", "content": history_summary})
 
         return {
             "type": "operation_success",

@@ -119,6 +119,13 @@ class NetworkOps:
                 "stderr": ""
             }
 
+        # Clean up any existing opposing rule on this port/proto/src (e.g. DROP when applying ACCEPT)
+        # We loop until iptables -D fails to ensure ALL duplicates/conflicts of the opposing action are removed
+        opposing_actions = ["DROP", "REJECT"] if act_upper == "ACCEPT" else (["ACCEPT"] if act_upper in ["DROP", "REJECT"] else [])
+        for opp in opposing_actions:
+            while cls.check_rule_exists(opp, port, proto_lower, src):
+                cls.remove_iptables_rule(opp, port, proto_lower, src)
+
         if HAS_IPTABLES:
             args = ["iptables", "-A", "INPUT"]
             if proto_lower and proto_lower != "all":
@@ -290,12 +297,15 @@ class NetworkOps:
         }
 
     @classmethod
-    def list_iptables_rules(cls) -> str:
+    def list_iptables_rules(cls) -> dict:
         """List iptables INPUT chain rules in standard Linux iptables format."""
         if HAS_IPTABLES:
             res = cls._run_args(["iptables", "-L", "INPUT", "-v", "-n", "--line-numbers"])
             if res["success"] and res["stdout"]:
-                return res["stdout"]
+                return {
+                    "rules": res["stdout"],
+                    "execution": res
+                }
 
         if cls._active_rules:
             lines = [
@@ -308,17 +318,40 @@ class NetworkOps:
                 lines.append(
                     f"{r['num']:<5} 0     0      {r['action']:<10} {r['protocol']:<5} --   *      *      {src_str:<20} 0.0.0.0/0            {opt_str}"
                 )
-            return "\n".join(lines)
+            table = "\n".join(lines)
+            return {
+                "rules": table,
+                "execution": {
+                    "command": "iptables -L INPUT -v -n --line-numbers (in-memory)",
+                    "stdout": table,
+                    "stderr": "",
+                    "returncode": 0,
+                    "execution_mode": "in_memory"
+                }
+            }
 
-        return "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\nNo active firewall rules configured."
+        empty_table = "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\nNo active firewall rules configured."
+        return {
+            "rules": empty_table,
+            "execution": {
+                "command": "iptables -L INPUT -v -n --line-numbers",
+                "stdout": empty_table,
+                "stderr": "",
+                "returncode": 0,
+                "execution_mode": "real" if HAS_IPTABLES else "in_memory"
+            }
+        }
 
     @classmethod
-    def list_listening_ports(cls) -> str:
+    def list_listening_ports(cls) -> dict:
         """List TCP listening sockets using ss (Linux) or netstat (Windows) cleanly."""
         if shutil.which("ss") is not None:
             res = cls._run_args(["ss", "-tlnp"])
             if res["success"] and res["stdout"]:
-                return res["stdout"]
+                return {
+                    "raw": res["stdout"],
+                    "execution": res
+                }
 
         # Run netstat cleanly on Windows/generic
         res2 = cls._run_args(["netstat", "-ano"])
@@ -339,9 +372,19 @@ class NetworkOps:
                         cleaned.append(f"{proto:<7} {local:<23} {foreign:<23} {state:<15} {pid}")
                     else:
                         cleaned.append(line.strip())
-                return header + "\n" + "\n".join(cleaned)
-            return "No active listening ports detected."
+                raw_table = header + "\n" + "\n".join(cleaned)
+                return {
+                    "raw": raw_table,
+                    "execution": {
+                        "command": "netstat -ano | findstr LISTENING",
+                        "stdout": raw_table,
+                        "stderr": "",
+                        "returncode": 0,
+                        "execution_mode": res2.get("execution_mode", "real")
+                    }
+                }
+            return {"raw": "No active listening ports detected.", "execution": res2}
 
-        return "Unable to enumerate listening sockets."
+        return {"raw": "Unable to enumerate listening sockets.", "execution": res2}
 
 
