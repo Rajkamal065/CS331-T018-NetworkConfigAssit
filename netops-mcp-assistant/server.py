@@ -108,11 +108,25 @@ def configure_firewall(action: str, port: int = 0, protocol: str = "tcp", source
                 "action": action,
                 "port": port,
                 "protocol": protocol.lower() if protocol else "tcp",
-                "source_ip": source_ip
+                "source_ip": source_ip,
+                "execution": {
+                    "command": res.get("command"),
+                    "stdout": res.get("stdout", ""),
+                    "stderr": res.get("stderr", ""),
+                    "returncode": res.get("returncode", 0),
+                    "execution_mode": res.get("execution_mode", "unknown")
+                }
             })
         return json.dumps({
             "status": "EXECUTION_FAILURE",
-            "error": res.get("stderr") or "Command execution failed"
+            "error": res.get("stderr") or "Command execution failed",
+            "execution": {
+                "command": res.get("command"),
+                "stdout": res.get("stdout", ""),
+                "stderr": res.get("stderr", ""),
+                "returncode": res.get("returncode", -1),
+                "execution_mode": res.get("execution_mode", "unknown")
+            }
         })
     except Exception as e:
         return json.dumps({

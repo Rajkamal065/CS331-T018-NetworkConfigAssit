@@ -34,17 +34,42 @@ class NetworkOps:
                 text=True, check=False, timeout=15
             )
             return {
-                "success": result.returncode == 0,
-                "returncode": result.returncode,
-                "stdout": result.stdout.strip(),
-                "stderr": result.stderr.strip()
-            }
+                        "success": result.returncode == 0,
+                        "returncode": result.returncode,
+                        "stdout": result.stdout.strip(),
+                        "stderr": result.stderr.strip(),
+                        "command": " ".join(args),
+                        "execution_mode": "real"
+                    }
         except subprocess.TimeoutExpired:
-            return {"success": False, "returncode": -1, "stdout": "", "stderr": "Command timed out"}
+            return {
+                "success": False,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": "Command timed out",
+                "command": " ".join(args),
+                "execution_mode": "real"
+            }
+
         except FileNotFoundError:
-            return {"success": False, "returncode": -1, "stdout": "", "stderr": "Binary not found on system"}
+            return {
+                "success": False,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": "Binary not found on system",
+                "command": " ".join(args),
+                "execution_mode": "unavailable"
+            }
+
         except Exception as e:
-            return {"success": False, "returncode": -1, "stdout": "", "stderr": str(e)}
+            return {
+                "success": False,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": str(e),
+                "command": " ".join(args),
+                "execution_mode": "real"
+            }
 
     @classmethod
     def check_rule_exists(cls, action: str, port: int = 0, proto: str = "tcp", source_ip: Optional[str] = None) -> bool:
@@ -129,7 +154,9 @@ class NetworkOps:
             "success": True,
             "duplicate": False,
             "stdout": f"Firewall rule applied: {act_upper} {target_desc}",
-            "stderr": ""
+            "stderr": "",
+            "command": None,
+            "execution_mode": "in_memory_fallback"
         }
 
     @classmethod

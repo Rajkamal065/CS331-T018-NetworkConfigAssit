@@ -325,6 +325,7 @@ class NetOpsBridge:
             "tool": tool_name,
             "arguments": tool_args,
             "result": mcp_data,
+            "execution": mcp_data.get("execution"),
             "verification": verification_data,
             "timeline": timeline,
             "ai_response": final_ai_msg

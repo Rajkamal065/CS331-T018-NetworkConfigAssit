@@ -211,7 +211,75 @@ function removeElement(id) {
   const el = document.getElementById(id);
   if (el) el.remove();
 }
+function renderExecutionTerminal(execution) {
+  if (!execution || typeof execution !== "object") return "";
 
+  const command = execution.command;
+  const stdout = execution.stdout || "";
+  const stderr = execution.stderr || "";
+
+  const returncode =
+    execution.returncode !== undefined
+      ? execution.returncode
+      : execution.exit_code !== undefined
+        ? execution.exit_code
+        : null;
+
+  // If no real command was executed, do not fabricate terminal output.
+  if (!command) return "";
+
+  const success = returncode === 0;
+  const exitText =
+    returncode === null ? "EXIT CODE —" : `EXIT CODE ${returncode}`;
+
+  let output = "";
+
+  if (stdout) {
+    output += `
+      <div class="terminal-output">${escapeHtml(stdout)}</div>
+    `;
+  }
+
+  if (stderr) {
+    output += `
+      <div class="terminal-stderr">${escapeHtml(stderr)}</div>
+    `;
+  }
+
+  if (!stdout && !stderr) {
+    output = `
+      <div class="terminal-empty">No command output.</div>
+    `;
+  }
+
+  const mode = execution.execution_mode
+    ? `<span class="execution-mode">${escapeHtml(execution.execution_mode)}</span>`
+    : "";
+
+  return `
+    <div class="terminal-panel">
+
+      <div class="terminal-header">
+        <span class="terminal-title">Network Operation</span>
+
+        <span class="terminal-exit ${success ? "success" : "failure"}">
+          ${exitText}${mode}
+        </span>
+      </div>
+
+      <div class="terminal-body">
+
+        <div class="terminal-command">
+          <span class="terminal-prompt">$ </span>${escapeHtml(command)}
+        </div>
+
+        ${output}
+
+      </div>
+
+    </div>
+  `;
+}
 function renderAssistantResponse(res) {
   const stream = document.getElementById("chat-stream");
   const row = document.createElement("div");
@@ -255,7 +323,14 @@ function renderAssistantResponse(res) {
     bodyHtml += `</div>`;
   }
 
-  // 3. Verification Card or Rejection Card
+  // 3. Real command execution output.
+  // This comes directly from NetworkOps.
+  // No terminal output is generated or fabricated by the frontend.
+  if (res.execution) {
+    bodyHtml += renderExecutionTerminal(res.execution);
+  }
+
+  // 4. Verification Card or Rejection Card
   if (res.type === "policy_rejection") {
     bodyHtml += `
       <div class="verification-box rejected">
@@ -264,7 +339,10 @@ function renderAssistantResponse(res) {
           <span class="badge badge-danger">Blocked by FastMCP</span>
         </div>
         <div class="verif-summary">
-          <strong>Security Violation:</strong> ${escapeHtml(res.error || "Action prohibited by security policies")}
+          <strong>Security Violation:</strong>
+          ${escapeHtml(res.error || "Action prohibited by security policies")}
+          <br>
+          <strong>No network command was executed.</strong>
         </div>
       </div>
     `;
@@ -272,8 +350,9 @@ function renderAssistantResponse(res) {
     const v = res.verification;
     const isVerified = v.status === "VERIFIED" || v.status === "PASS";
     const boxClass = isVerified ? "verified" : "warning";
-    const statusText = isVerified ? "✅ Independently Verified" : "⚠️ Verification Caution";
-
+    const statusText = isVerified
+      ? "Independently Verified"
+      : "Verification Caution";
     bodyHtml += `
       <div class="verification-box ${boxClass}">
         <div class="verif-header">

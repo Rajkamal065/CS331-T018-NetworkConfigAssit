@@ -1306,3 +1306,177 @@ textarea:focus-visible {
         padding: 23px 25px;
     }
 }
+
+/* =========================================================
+   REAL COMMAND TERMINAL
+   ========================================================= */
+
+.terminal-panel {
+    margin-top: 15px;
+    overflow: hidden;
+
+    border: 1px solid #1f2937;
+    border-radius: 9px;
+
+    background: #0b0f14;
+    color: #d8dee9;
+
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
+
+.terminal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 12px;
+
+    padding: 10px 13px;
+
+    border-bottom: 1px solid #202832;
+
+    background: #11161d;
+}
+
+.terminal-title {
+    color: #cbd5e1;
+
+    font-family: "JetBrains Mono", monospace;
+
+    font-size: 10px;
+    font-weight: 700;
+
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.terminal-exit {
+    color: #94a3b8;
+
+    font-family: "JetBrains Mono", monospace;
+
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.terminal-exit.success {
+    color: #86efac;
+}
+
+.terminal-exit.failure {
+    color: #fca5a5;
+}
+
+.terminal-body {
+    max-height: 360px;
+
+    padding: 15px;
+
+    overflow: auto;
+
+    font-family: "JetBrains Mono", monospace;
+
+    font-size: 11px;
+    line-height: 1.7;
+}
+
+.terminal-command {
+    color: #f8fafc;
+
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.terminal-prompt {
+    color: #93c5fd;
+
+    user-select: none;
+}
+
+.terminal-output {
+    margin-top: 10px;
+
+    color: #cbd5e1;
+
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.terminal-stderr {
+    margin-top: 10px;
+
+    color: #fca5a5;
+
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.terminal-empty {
+    color: #64748b;
+
+    font-style: italic;
+}
+
+.execution-mode {
+    margin-left: 10px;
+
+    color: #94a3b8;
+}
+
+/* =========================================================
+   TYPOGRAPHY IMPROVEMENT
+   ========================================================= */
+
+/* Main conversation text */
+.message-bubble {
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+/* Assistant response */
+.ai-text {
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+/* Timeline */
+.timeline-title {
+    font-size: 11px;
+}
+
+.step-name {
+    font-size: 10px;
+}
+
+.step-detail {
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+/* Result cards */
+.result-title {
+    font-size: 12px;
+}
+
+.result-subtitle {
+    font-size: 9px;
+}
+
+/* Data */
+.data-label {
+    font-size: 8px;
+}
+
+.data-value {
+    font-size: 10px;
+}
+
+/* Verification */
+.verif-status {
+    font-size: 10px;
+}
+
+.verif-summary {
+    font-size: 10px;
+    line-height: 1.55;
+}
