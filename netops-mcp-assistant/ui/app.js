@@ -84,9 +84,9 @@ function updateStatusUI(status) {
       llmBadge.textContent = "Online";
       llmBadge.className = "badge badge-success";
     } else {
-      llmDesc.textContent = status.llm.provider || "Offline Rule Engine";
-      llmBadge.textContent = "Active";
-      llmBadge.className = "badge badge-success";
+      llmDesc.textContent = status.llm.provider || "Offline";
+      llmBadge.textContent = "Offline";
+      llmBadge.className = "badge badge-danger";
     }
   }
 
@@ -110,8 +110,10 @@ function updateStatusUI(status) {
   // Agent Mode Pill
   const pillText = document.getElementById("agent-mode-text");
   if (pillText) {
-    const p = status.llm && status.llm.connected ? status.llm.provider.toUpperCase() : "HEURISTIC";
-    pillText.textContent = `NetOps Autonomous Agent [${p} + FastMCP stdio]`;
+    const p = status.llm && status.llm.connected
+      ? status.llm.provider.toUpperCase()
+      : "OFFLINE";
+    pillText.textContent = `NetOps Agent [${p} + FastMCP stdio]`;
   }
 }
 
@@ -193,10 +195,10 @@ function appendLoadingCard(id) {
     <div class="avatar ai">AI</div>
     <div class="message-bubble">
       <div class="ai-card">
-        <div class="ai-meta">Interpreting Request & Enforcing Policies...</div>
+        <div class="ai-meta">Processing Network Request</div>
         <div class="step-indicator" style="flex-direction: row; gap: 8px; align-items: center;">
           <span class="step-dot running"></span>
-          <span style="font-size: 0.85rem; color: var(--text-secondary);">Synthesizing intent with LLM and dispatching FastMCP stdio transport...</span>
+          <span style="font-size: 0.85rem; color: var(--text-secondary);">Resolving intent, applying policy, and executing through MCP...</span>
         </div>
       </div>
     </div>
@@ -258,7 +260,7 @@ function renderAssistantResponse(res) {
     bodyHtml += `
       <div class="verification-box rejected">
         <div class="verif-header">
-          <span class="verif-status">🛡️ Authoritative Policy Rejection</span>
+          <span class="verif-status">Authoritative Policy Rejection</span>
           <span class="badge badge-danger">Blocked by FastMCP</span>
         </div>
         <div class="verif-summary">
@@ -291,7 +293,7 @@ function renderAssistantResponse(res) {
     bodyHtml += `
       <div class="verification-box ${isPass ? 'verified' : 'warning'}" style="margin-top: 10px;">
         <div class="verif-header">
-          <span class="verif-status">⚡ Diagnostic Reachability Metrics</span>
+          <span class="verif-status">Diagnostic Reachability Metrics</span>
           <span class="badge ${statusClass}">${escapeHtml(r.status || 'DONE')}</span>
         </div>
         <div class="verif-summary">
@@ -358,8 +360,8 @@ function clearChat() {
   const stream = document.getElementById("chat-stream");
   stream.innerHTML = `
     <div class="welcome-card" id="welcome-hero">
-      <div class="welcome-badge">FAST-MCP + CLAUDE LLM + INDEPENDENT VERIFIER</div>
-      <h1>Autonomous Network Operations</h1>
+      <div class="welcome-badge">AI INTENT · MCP POLICY · INDEPENDENT VERIFICATION</div>
+      <h1>Network Operations</h1>
       <p>
         Experience true AI-driven network administration. Natural language commands are parsed into structured MCP tool calls, authoritatively validated against security policies, and independently verified via live kernel inspection and socket probing.
       </p>

@@ -23,7 +23,7 @@
           </svg>
         </div>
         <div class="brand-meta">
-          <h2>NetOps AI</h2>
+          <h2>NetOps Agent</h2>
           <span class="brand-sub">MCP Architecture v2.0</span>
         </div>
       </div>
@@ -65,28 +65,46 @@
         <span class="section-title">Quick Actions</span>
         <div class="preset-list">
           <button class="preset-btn" id="btn-show-rules" onclick="handlePreset('Show all active iptables firewall rules')">
-            <span class="btn-icon">📜</span>
-            <span class="btn-text">List Firewall Rules</span>
+            <span class="quick-action-number">01</span>
+            <span>
+              <span class="quick-action-title">List Firewall Rules</span>
+              <span class="quick-action-description">Review active firewall policy</span>
+            </span>
           </button>
           <button class="preset-btn" id="btn-list-ports" onclick="handlePreset('What ports are currently listening on this machine?')">
-            <span class="btn-icon">🔌</span>
-            <span class="btn-text">Check Listening Ports</span>
+            <span class="quick-action-number">02</span>
+            <span>
+              <span class="quick-action-title">Listening Ports</span>
+              <span class="quick-action-description">Inspect active sockets</span>
+            </span>
           </button>
           <button class="preset-btn" id="btn-demo-block" onclick="handlePreset('Block port 9999 TCP with DROP')">
-            <span class="btn-icon">🛡️</span>
-            <span class="btn-text">Block Demo Port 9999</span>
+            <span class="quick-action-number">03</span>
+            <span>
+              <span class="quick-action-title">Block Demo Port 9999</span>
+              <span class="quick-action-description">Apply a TCP drop rule</span>
+            </span>
           </button>
           <button class="preset-btn" id="btn-demo-allow" onclick="handlePreset('Allow port 9999 TCP')">
-            <span class="btn-icon">🔓</span>
-            <span class="btn-text">Allow Demo Port 9999</span>
+            <span class="quick-action-number">04</span>
+            <span>
+              <span class="quick-action-title">Allow Demo Port 9999</span>
+              <span class="quick-action-description">Restore TCP traffic</span>
+            </span>
           </button>
           <button class="preset-btn" id="btn-test-lockout" onclick="handlePreset('Block port 22 immediately')">
-            <span class="btn-icon">⛔</span>
-            <span class="btn-text">Test Port 22 (Lockout Test)</span>
+            <span class="quick-action-number">05</span>
+            <span>
+              <span class="quick-action-title">Test Protected Port 22</span>
+              <span class="quick-action-description">Confirm SSH policy guard</span>
+            </span>
           </button>
           <button class="preset-btn" id="btn-ping-test" onclick="handlePreset('Ping 127.0.0.1 to check latency')">
-            <span class="btn-icon">⚡</span>
-            <span class="btn-text">Ping Localhost Diagnostic</span>
+            <span class="quick-action-number">06</span>
+            <span>
+              <span class="quick-action-title">Ping Localhost</span>
+              <span class="quick-action-description">Run a reachability check</span>
+            </span>
           </button>
         </div>
       </div>
@@ -95,11 +113,11 @@
       <div class="policy-snapshot">
         <span class="section-title">Security Invariants</span>
         <div class="policy-pill-list">
-          <span class="policy-pill">🚫 Port 22 (SSH)</span>
-          <span class="policy-pill">🚫 Port 53 (DNS)</span>
-          <span class="policy-pill">🚫 Port 5000 (Agent)</span>
-          <span class="policy-pill">🚫 eth0 / lo interface</span>
-          <span class="policy-pill">✅ Arbitrary Ports (1-65535)</span>
+          <span class="policy-pill">Port 22 (SSH)</span>
+          <span class="policy-pill">Port 53 (DNS)</span>
+          <span class="policy-pill">Port 5000 (Agent)</span>
+          <span class="policy-pill">eth0 / lo interface</span>
+          <span class="policy-pill">Arbitrary Ports (1-65535)</span>
         </div>
       </div>
 
@@ -138,8 +156,8 @@
       <section class="chat-container" id="chat-stream">
         <!-- Welcome Hero -->
         <div class="welcome-card" id="welcome-hero">
-          <div class="welcome-badge">FAST-MCP + CLAUDE LLM + INDEPENDENT VERIFIER</div>
-          <h1>Autonomous Network Operations</h1>
+          <div class="welcome-badge">AI INTENT · MCP POLICY · INDEPENDENT VERIFICATION</div>
+          <h1>Network Operations</h1>
           <p>
             Experience true AI-driven network administration. Natural language commands are parsed into structured MCP tool calls, authoritatively validated against security policies, and independently verified via live kernel inspection and socket probing.
           </p>
@@ -158,7 +176,7 @@
           <div class="input-box-wrapper">
             <textarea
               id="user-input"
-              placeholder="Ask NetOps AI (e.g. 'Block port 9999 TCP with DROP', 'Check listening ports', 'Set bandwidth limit on eth1 to 20 Mbps')..."
+              placeholder="Ask NetOps Agent (e.g. 'Block port 9999 TCP with DROP', 'Check listening ports', 'Set bandwidth limit on eth1 to 20 Mbps')..."
               rows="1"
               onkeydown="handleKeyDown(event)"
             ></textarea>
@@ -171,7 +189,7 @@
           </div>
           <div class="input-meta">
             <span>Press <kbd>Enter</kbd> to submit, <kbd>Shift+Enter</kbd> for newline</span>
-            <span class="security-note">🔒 Policy Engine actively guards protected infrastructure</span>
+            <span class="security-note">Policy-controlled network operations</span>
           </div>
         </form>
       </footer>
