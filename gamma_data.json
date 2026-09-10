@@ -1,0 +1,12 @@
+{
+  "props": {
+    "pageProps": {}
+  },
+  "page": "/docs/[docId]",
+  "query": {},
+  "buildId": "build-TfctsWXpff2fKS",
+  "nextExport": true,
+  "autoExport": true,
+  "isFallback": false,
+  "scriptLoader": []
+}

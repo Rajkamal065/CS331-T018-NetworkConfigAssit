@@ -1,18 +1,38 @@
-# NetOps MCP Assistant: GitHub Installation Guide
+# NetOps MCP Assistant — CS331-T018
 
-This guide is for a new user who has cloned this repository and wants to install, run, test, and troubleshoot the project.
+An AI-powered Linux network configuration assistant. Users describe their goal in plain English; the system autonomously configures the Linux kernel, runs diagnostics, and reports before/after performance benchmarks.
 
 ## What This Project Does
 
 NetOps MCP Assistant lets a network administrator use natural language to:
 
-- Configure firewall rules.
-- Apply bandwidth limits.
-- Inspect listening ports and firewall rules.
-- Run network diagnostics.
-- Verify that an approved change actually took effect.
+- **Configure firewall rules** — Block/allow ports and IPs via iptables
+- **Apply bandwidth limits** — Traffic shaping via tc qdisc tbf
+- **Inspect the system** — Listening ports, active firewall rules, bandwidth state
+- **Run network diagnostics** — Ping reachability, iperf3 throughput tests
+- **Apply workload profiles** — Tune the Linux kernel for gaming, streaming, broadcasting, bulk transfer, or server workloads
+- **Benchmark before/after** — Automated latency/jitter measurements + matplotlib comparison charts saved to `results/`
+- **Verify changes** — Independent dual-layer verification that rules took effect
 
 The LLM interprets the request. The FastMCP server remains the policy and execution authority.
+
+### Available Optimization Profiles
+
+| Profile | Goal | Key Parameters |
+|:---|:---|:---|
+| `gaming` | Minimum latency, bufferbloat elimination | `fq_codel`, BBR, 4 MB buffers, `tcp_low_latency=1` |
+| `streaming` | Maximum video download throughput | 16 MB `rmem_max`, `tcp_slow_start_after_idle=0` |
+| `broadcasting` | Stable upload for OBS/Twitch/Zoom | 16 MB `wmem_max`, BBR + `fq` pacing |
+| `bulk_transfer` | Maximum raw TCP throughput | 256 MB buffers, BBR, max `netdev_budget` |
+| `server` | High-concurrency with DDoS protection | SYN cookies, 8192 SYN backlog, fast socket reuse |
+
+**Example prompts:**
+- *"Optimize my system for gaming and benchmark it"*
+- *"Apply the streaming profile and show me before/after results"*
+- *"I'm going live on Twitch, optimize my upload"*
+
+The LLM interprets the request. The FastMCP server remains the policy and execution authority.
+
 
 ## Recommended Installation: Docker
 

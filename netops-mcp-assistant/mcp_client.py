@@ -100,7 +100,7 @@ class MCPClient:
             self._async_call_tool(name, arguments),
             self._loop
         )
-        return future.result(timeout=30.0)
+        return future.result(timeout=60.0)
 
     async def _async_call_tool(self, name: str, arguments: Dict[str, Any]) -> str:
         result = await self._session.call_tool(name, arguments=arguments)

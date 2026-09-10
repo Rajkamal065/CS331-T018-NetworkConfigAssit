@@ -144,25 +144,28 @@ def main():
     args = parse_args()
 
     # Remote Docker backend connection mode:
-    # Just launch the native desktop GUI window pointed at the Docker container!
+    # Open the Docker backend URL in the system browser.
+    # NOTE: We intentionally do NOT use pywebview here — pywebview intercepts
+    # static file requests (app.js, styles.css) and serves them from the local
+    # Windows disk instead of Docker, which causes Windows tools to run instead
+    # of Linux tools. The real browser fetches everything from Docker correctly.
     if args.connect:
         app_url = args.connect.rstrip("/")
-        logger.info(f"Connecting native desktop window to Docker backend: {app_url}")
+        logger.info(f"Opening Docker backend in system browser: {app_url}")
+        print(f"\n=======================================================")
+        print(f"  NetOps MCP Assistant — Docker Backend")
+        print(f"  Connected to: {app_url}")
+        print(f"  The app will open in your default browser.")
+        print(f"  Press Ctrl+C here to disconnect.")
+        print(f"=======================================================\n")
+        webbrowser.open(app_url)
         try:
-            import webview
-            window = webview.create_window(
-                title="NetOps MCP Assistant — AI Network Operations (Docker Backend)",
-                url=app_url,
-                width=1260,
-                height=860,
-                min_size=(960, 640),
-                background_color="#080c14"
-            )
-            webview.start(debug=args.debug)
-        except ImportError:
-            logger.warning("pywebview not installed. Opening in default browser...")
-            webbrowser.open(app_url)
+            while True:
+                threading.Event().wait(1)
+        except KeyboardInterrupt:
+            logger.info("Disconnected from Docker backend.")
         return
+
 
     logger.info("Initializing NetOps MCP Assistant Subsystems...")
 

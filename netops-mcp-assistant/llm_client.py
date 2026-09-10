@@ -185,6 +185,53 @@ MCP_TOOLS_SCHEMA = [
                 "required": ["action", "port"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_network_profile",
+            "description": "Apply a kernel-level network optimization profile. Use IMMEDIATELY and WITHOUT asking questions when the user mentions: gaming, game, fps, ping, latency, lag, streaming, stream, video, netflix, youtube, twitch watch, broadcasting, broadcast, obs, upload, going live. Map to profile: gaming=gaming, streaming/watching/netflix/youtube=streaming, broadcasting/obs/upload/going live=broadcasting.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile": {
+                        "type": "string",
+                        "enum": ["gaming", "streaming", "broadcasting"],
+                        "description": "Profile name: gaming (low latency), streaming (download throughput), broadcasting (upload throughput)"
+                    }
+                },
+                "required": ["profile"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_profile_benchmark",
+            "description": "Run a full before/after network benchmark for a profile. Apply the profile AND measure performance. Use when user says 'benchmark', 'test', 'measure', 'show results', 'before after', or combines 'optimize' with 'benchmark/test/measure/show'. Also use this instead of apply_network_profile when user wants to SEE the improvement.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile": {
+                        "type": "string",
+                        "enum": ["gaming", "streaming", "broadcasting"],
+                        "description": "Profile to benchmark"
+                    }
+                },
+                "required": ["profile"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "restore_network_defaults",
+            "description": "Roll back ALL kernel sysctl parameters to the state before the last profile was applied. Use when user says: restore, undo, rollback, revert, reset, go back, defaults, something went wrong, broken.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
     }
 ]
 
@@ -193,21 +240,46 @@ SYSTEM_PROMPT = """You are NetOps MCP Assistant, an AI that helps manage Linux n
 
 You interpret natural language requests and convert them into structured tool calls.
 You NEVER generate shell commands directly. You ONLY use the provided tools.
+You NEVER ask clarifying questions for profile optimizations — always act immediately.
 
 IMPORTANT RULES:
+
+## Firewall Rules
 - For blocking/dropping ports, use configure_firewall with action="DROP"
 - For allowing ports, use configure_firewall with action="ACCEPT"
 - For rejecting ports, use configure_firewall with action="REJECT"
 - Default protocol is "tcp" unless the user specifies otherwise
 - Default source_ip is "" (any source) unless the user specifies one
 - For bandwidth limits, identify the interface name and rate
+
+## Network Profiles — ACT IMMEDIATELY, NO QUESTIONS
+When user mentions any of the following keywords, call apply_network_profile RIGHT AWAY:
+- gaming, game, fps, ping, low latency, lag, csgo, fortnite, minecraft → profile="gaming"
+- streaming, stream, netflix, youtube, watching, video quality, buffering, 4k → profile="streaming"
+- broadcasting, broadcast, obs, twitch stream, going live, upload, live stream → profile="broadcasting"
+
+DO NOT ask what service, what interface, or any other question. Just call the tool.
+Example: user says "optimize for streaming" → immediately call apply_network_profile(profile="streaming")
+Example: user says "i'm gaming" → immediately call apply_network_profile(profile="gaming")
+Example: user says "i want to go live" → immediately call apply_network_profile(profile="broadcasting")
+
+## Benchmarks
+If user adds "benchmark", "test", "show me", "before after", "measure" to a profile request:
+→ Use run_profile_benchmark instead of apply_network_profile (it does both apply + measure)
+
+## Restore / Rollback
+- If the user explicitly asks to restore, undo, rollback, or revert (e.g., "restore defaults", "rollback now", "undo changes", "revert", "reset to default"):
+  → Call restore_network_defaults
+- If the user is asking an informational question (e.g., "what rollbacks do I have?", "show rollback options", "how does rollback work?"):
+  → DO NOT call restore_network_defaults. Answer conversationally, explaining the checkpoint system and available fallback states.
+
+## Other tools
 - For diagnostics, identify the target IP and mode (ping or iperf3)
 - For listing rules, use list_firewall_rules with no arguments
 - When the user asks to check ports or listening services, use check_listening_ports
 - When checking connectivity to a port, use check_port_connectivity
 
-You are an intent interpreter. Security validation is handled by the MCP server.
-Respond conversationally when appropriate, but always call the relevant tool for network operations."""
+You are an intent interpreter. Security validation is handled by the MCP server."""
 
 
 class LLMClient:
@@ -441,6 +513,55 @@ class LLMClient:
 
             tool_name = fn["name"]
 
+            # ── BUG FIX 1: Profile anchoring ─────────────────────────────────
+            # The LLM can anchor on previous profile tool calls in history and
+            # repeat the same profile even when the user says a different one.
+            # Override by scanning the CURRENT message for profile keywords.
+            PROFILE_KEYWORDS = {
+                "gaming":       ["gaming", "game", "fps", "ping", "latency", "lag",
+                                 "csgo", "fortnite", "minecraft", "valorant", "low ping"],
+                "streaming":    ["streaming", "stream", "netflix", "youtube", "watching",
+                                 "video", "buffering", "4k", "watch"],
+                "broadcasting": ["broadcasting", "broadcast", "obs", "going live",
+                                 "live stream", "twitch stream"],
+            }
+            if tool_name in ("apply_network_profile", "run_profile_benchmark"):
+                msg_lower = user_message.lower()
+                for profile_name, keywords in PROFILE_KEYWORDS.items():
+                    if any(kw in msg_lower for kw in keywords):
+                        args["profile"] = profile_name
+                        break   # first match wins
+
+            # ── BUG FIX 2: Firewall intent override ──────────────────────────
+            # If LLM picks DROP but user said 'create/open/allow/enable port',
+            # override to ACCEPT.
+            ACCEPT_KEYWORDS = ["create", "open", "allow", "enable", "add", "permit"]
+            DROP_KEYWORDS   = ["block", "drop", "deny", "reject", "close", "remove"]
+            if tool_name == "configure_firewall":
+                msg_lower = user_message.lower()
+                if any(kw in msg_lower for kw in ACCEPT_KEYWORDS):
+                    args["action"] = "ACCEPT"
+                elif any(kw in msg_lower for kw in DROP_KEYWORDS):
+                    pass  # keep what LLM chose (DROP/REJECT)
+
+            # ── BUG FIX 3: IP address validation ─────────────────────────────
+            # If the LLM passes something that isn't a valid IPv4 address
+            # (e.g. 'ping 8888' → target_ip='8888'), return an error early
+            # rather than letting the server reject it with a confusing message.
+            if tool_name == "run_diagnostics":
+                import ipaddress as _ip
+                raw_ip = args.get("target_ip", "")
+                try:
+                    _ip.IPv4Address(raw_ip)
+                except Exception:
+                    return {
+                        "type": "message",
+                        "message": f"'{raw_ip}' is not a valid IPv4 address. "
+                                   f"Please provide a dotted-decimal address, e.g. 8.8.8.8 or 1.1.1.1.",
+                        "ai_response": f"'{raw_ip}' is not a valid IPv4 address. "
+                                       f"Please provide a full address like 8.8.8.8."
+                    }
+
             # Normalize optional arguments before passing to MCP
             if tool_name == "configure_firewall":
                 args.setdefault("protocol", "tcp")
@@ -483,6 +604,14 @@ class LLMClient:
                     llm_content = f"Testing TCP connectivity to port {args.get('port')} on {args.get('host', '127.0.0.1')}."
                 elif tool_name == "verify_firewall_rule":
                     llm_content = f"Checking firewall table for {args.get('action', 'rule')} on port {args.get('port')}."
+                elif tool_name == "apply_network_profile":
+                    prof = args.get("profile", "selected")
+                    llm_content = f"Applying {prof} network optimization profile..."
+                elif tool_name == "run_profile_benchmark":
+                    prof = args.get("profile", "selected")
+                    llm_content = f"Benchmarking {prof} network profile (measuring before & after)..."
+                elif tool_name == "restore_network_defaults":
+                    llm_content = "Restoring baseline Linux network parameters..."
                 else:
                     llm_content = f"Running network operation: {tool_name}."
 

@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iperf3 \
     curl \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Create results directory for benchmark charts
+RUN mkdir -p /app/results
 
 # Expose Web UI & API port
 EXPOSE 5000
