@@ -1,6 +1,13 @@
 # NetOps MCP Assistant — CS331-T018
 
-An AI-powered Linux network configuration assistant. Users describe their goal in plain English; the system autonomously configures the Linux kernel, runs diagnostics, and reports before/after performance benchmarks.
+> **An AI-Powered Autonomous Linux Network Configuration Assistant**  
+> **Course:** CS331 — Computer Networks | **Team:** Team T018  
+
+### 📚 Documentation
+- 📄 **[CS331 Midsem/Project Report](CS331_T018_Project_Report.md)**
+- 🏗️ **[System Architecture Specification](ARCHITECTURE.md)**
+- 📘 **[Implementation Reference](README.md)**
+
 
 ## What This Project Does
 
