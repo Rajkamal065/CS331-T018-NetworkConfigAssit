@@ -9,6 +9,7 @@ __pycache__/
 
 # Local reference & scratch directories
 scratch/
+netops-mcp-assistant/
 
 # OS and IDE files
 .DS_Store

@@ -70,4 +70,4 @@ The integration of AI was heavily structured to prevent hallucinated logic from 
 
 ### Stage 5: Testing and Documentation
 * **Contribution:** We provided the AI with our final Python classes and asked it to generate corresponding unit tests using `pytest`. We also used AI to format our final markdown reports (`README.md`, `CS331_T018_Project_Report.md`) for clarity and consistency.
-* **Result:** 34 automated tests passing out-of-the-box, ensuring policy boundaries hold, alongside comprehensive, professional documentation.
+* **Result:** 26 automated tests passing out-of-the-box, ensuring policy boundaries hold, alongside comprehensive, professional documentation.
