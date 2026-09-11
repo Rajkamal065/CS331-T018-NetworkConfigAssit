@@ -31,7 +31,7 @@ README.md
 
 ### Directory Contents Summary:
 - **`code/`**: Complete implementation of NetOps MCP Assistant (FastMCP server `server.py`, LLM bridge `llm_client.py`, coordinator `assistant.py`, web/desktop UI `ui/`, validation rules `rules/policies.yaml`, verification tools `tools/`, Docker container setup, and test suite).
-- **`report/`**: Final project report (`report.pdf`), Overleaf-compatible LaTeX source (`CS331_T018_Project_Report.tex`), Markdown version, and benchmark figures.
+- **`report/`**: Final project report PDF (`report.pdf`) and benchmark figures.
 - **`ppt/`**: Final presentation slides (`CN_PPT.pdf` / `presentation.pdf`).
 - **`AI_Used/`**: Comprehensive disclosure of AI tools, prompts, thought processes, and verification workflows used throughout the project.
 

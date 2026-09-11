@@ -4,7 +4,7 @@
 > **Course:** CS331 — Computer Networks | **Team:** Team T018  
 
 ### 📚 Documentation
-- 📄 **[CS331 Midsem/Project Report](CS331_T018_Project_Report.md)**
+- 📄 **[CS331 Project Report (PDF)](report/report.pdf)**
 - 🏗️ **[System Architecture Specification](ARCHITECTURE.md)**
 - 🤖 **[AI Usage Documentation](AI_Used/README.md)**
 - 📘 **[Implementation Reference](README.md)**
