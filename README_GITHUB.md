@@ -6,6 +6,7 @@
 ### 📚 Documentation
 - 📄 **[CS331 Midsem/Project Report](CS331_T018_Project_Report.md)**
 - 🏗️ **[System Architecture Specification](ARCHITECTURE.md)**
+- 🤖 **[AI Usage Documentation](AI_Used/README.md)**
 - 📘 **[Implementation Reference](README.md)**
 
 

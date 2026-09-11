@@ -13,6 +13,7 @@
 ## 📖 Quick Links
 - 📄 **[Full Project Report (CS331_T018_Project_Report.md)](CS331_T018_Project_Report.md)**: Final report explaining project problem statement, MCP architecture, setup, and validation results.
 - 🏗️ **[System Architecture (ARCHITECTURE.md)](ARCHITECTURE.md)**: Deep dive into the FastMCP server, rule-based policy engine, safe execution, and independent verification.
+- 🤖 **[AI Usage Documentation (AI_Used/README.md)](AI_Used/README.md)**: Official course AI usage documentation (Tools, Prompts, Thought Process, and Stage-by-Stage details).
 - 🐙 **[GitHub Setup Guide (README_GITHUB.md)](README_GITHUB.md)**: Clone instructions, environment setup, and deployment guide.
 
 ---
