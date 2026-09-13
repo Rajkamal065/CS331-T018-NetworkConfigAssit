@@ -165,3 +165,18 @@
 
 ### Prompt 50
 > after closingt eh server the rules will get deleted right or after the docker closes or what exactly
+
+### Prompt 51
+> okay this is my overall plan: a desktop/web ui in html/css/js that talks to assistant.py, which uses an llm to parse natural language, then calls a fastmcp server over stdio, checks policies.yaml, executes iptables and tc using safe subprocess without shell=True, and verifies with a dual-layer checker. based on this design generate me the initial basic codebase structure with all these components connected.
+
+### Prompt 52
+> in llm_client.py i want to integrate groq api instead of running heavy local models because local ollama is taking too long for inference. configure groq with llama-3.3-70b or openai/gpt-oss-120b and pass the exact fastmcp tool json schemas so it outputs clean structured tool calls with name and arguments.
+
+### Prompt 53
+> remove the unnecessary files why setup claude when i am just using groq? not even ollama is being used in the final version give me clean llm_client that cleanly talks to groq api with error handling when key is missing or api fails.
+
+### Prompt 54
+> in assistant.py make sure if the llm returns an error or is unreachable it doesn't silently execute fallback commands, it should return the error directly to the user and log the step in the timeline.
+
+### Prompt 55
+> 1 2 120 DROP tcp -- * * 0.0.0.0/0 0.0.0.0/0 tcp dpt:9999 what cmnd i need to do in terminal to check that it blocked whu the hell is yhat source desti 000
