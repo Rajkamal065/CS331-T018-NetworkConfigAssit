@@ -71,7 +71,7 @@
 > My current interface exposes too many technical implementation details such as “LLM”, “MCP client”, and internal subsystem names. I want the user experience to feel like a normal assistant conversation while still showing useful verification evidence. Suggest how I can present the same information in a more natural conversational UI.
 
 ### Prompt 19
-> I am considering showing a compact message such as “Processing — 5 steps completed” after an operation finishes, with the individual stages hidden until the user expands it. Evaluate whether this is a good UX pattern for my project and suggest what information should remain visible versus collapsible.
+> I am considering showing a compact message such as “Processing  5 steps completed” after an operation finishes, with the individual stages hidden until the user expands it. Evaluate whether this is a good UX pattern for my project and suggest what information should remain visible versus collapsible.
 
 ### Prompt 20
 > I want my UI to show actual Linux command execution evidence when a network operation really executes, but I don't want the interface to look like a terminal emulator. Suggest how I can present the command, stdout/stderr, and exit status in a compact expandable section while keeping the main conversation clean.
@@ -89,7 +89,7 @@
 > explain me what is mcp and also how does the assitant to mcp and then below works a clear detail with example
 
 ### Prompt 25
-> okay now i want to propse you a plan fo rthe report i dont know exact structure but i want it student level: 1 abstract or introduction or overview or problemstatement or multiple whatever 2) approach 3) architectture section explaining the architecure and how the flow works and everyhtung like that 4) implementations like new features added rollback of the profiles and how they work what firewall rules and all like that 5) verficaction how is it verfied basic level examples or the at what level and all that 6)maybe design of how the ui is designed maybe screenshots if want or not or we can put it in results 7)results here i want to show the graphs of the profiles mainly sho casing it actually being implemented at kernal level or what ever results you say give me a nice overflow
+> okay now i want to propse you a plan fo rthe report i dont know exact structure but i want it this: 1 abstract or introduction or overview or problemstatement or multiple whatever 2) approach 3) architectture section explaining the architecure and how the flow works and everyhtung like that 4) implementations like new features added rollback of the profiles and how they work what firewall rules and all like that 5) verficaction how is it verfied basic level examples or the at what level and all that 6)maybe design of how the ui is designed maybe screenshots if want or not or we can put it in results 7)results here i want to show the graphs of the profiles mainly sho casing it actually being implemented at kernal level or what ever results you say give me a nice overflow
 
 ### Prompt 26
 > now for the profiles tell me how to test
@@ -146,7 +146,7 @@
 > running iptables and tc docker rquired granting net_admin and net_raw capabilities to avoid permission denails withou fully comprimising container securiyt
 
 ### Prompt 44
-> what why is the mcp disconnected
+>  why is the mcp disconnected
 
 ### Prompt 45
 > did you apply whats the before and after bandwidth... did it work
@@ -165,6 +165,3 @@
 
 ### Prompt 50
 > after closingt eh server the rules will get deleted right or after the docker closes or what exactly
-
-### Prompt 51
-> 1 2 120 DROP tcp -- * * 0.0.0.0/0 0.0.0.0/0 tcp dpt:9999 what cmnd i need to do in terminal to check that it blocked whu the hell is yhat source desti 000
